@@ -280,6 +280,7 @@ def guardar_resultados(sh, resultado):
     set_with_dataframe(ws_vuelo, df_vuelo, row=13, include_index=False)
 
     # Formato visual
+    # Formato visual optimizado mediante un único batch_update
     if len(df_vuelo) > 0:
         format_cell_range(ws_vuelo, "A1:B4", CellFormat(textFormat=TextFormat(bold=True, fontSize=12)))
 
@@ -296,43 +297,55 @@ def guardar_resultados(sh, resultado):
         format_cell_range(ws_vuelo, "A11:D11", gris)
         format_cell_range(ws_vuelo, "A13:G13", gris)
 
-        rangos_p1 = []
-        rangos_p2 = []
-        rangos_p3 = []
-
-        for fila_excel, prioridad in enumerate(df_vuelo['P'].values, start=14):
-            rango = f"A{fila_excel}:G{fila_excel}"
+        # Construir solicitudes batchUpdate para colorear todas las filas por prioridad
+        requests = []
+        for idx, prioridad in enumerate(df_vuelo['P'].values):
+            fila_index = 13 + idx  # Índice base 0 de filas en Google Sheets API (Fila 14 = index 13)
+            
+            color_bg = None
             if prioridad == 1:
-                rangos_p1.append(rango)
+                color_bg = {"red": 1.0, "green": 0.85, "blue": 0.85}
             elif prioridad == 2:
-                rangos_p2.append(rango)
+                color_bg = {"red": 1.0, "green": 1.0, "blue": 0.80}
             elif prioridad == 3:
-                rangos_p3.append(rango)
+                color_bg = {"red": 0.85, "green": 1.0, "blue": 0.85}
 
-        if rangos_p1:
-            format_cell_range(ws_vuelo, ",".join(rangos_p1), rojo)
-        if rangos_p2:
-            format_cell_range(ws_vuelo, ",".join(rangos_p2), amarillo)
-        if rangos_p3:
-            format_cell_range(ws_vuelo, ",".join(rangos_p3), verde)
+            if color_bg:
+                requests.append({
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": ws_vuelo.id,
+                            "startRowIndex": fila_index,
+                            "endRowIndex": fila_index + 1,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 7
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "backgroundColor": color_bg
+                            }
+                        },
+                        "fields": "userEnteredFormat.backgroundColor"
+                    }
+                })
 
+        # Congelar la fila de encabezados
         ws_vuelo.freeze(rows=13)
 
-    sh.batch_update({
-        "requests": [
-            {
-                "autoResizeDimensions": {
-                    "dimensions": {
-                        "sheetId": ws_vuelo.id,
-                        "dimension": "COLUMNS",
-                        "startIndex": 0,
-                        "endIndex": 7
-                    }
+        # Incluir autoajuste de columnas y ejecutar todo en UNA SOLA llamada a la API
+        requests.append({
+            "autoResizeDimensions": {
+                "dimensions": {
+                    "sheetId": ws_vuelo.id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 0,
+                    "endIndex": 7
                 }
             }
-        ]
-    })
+        })
 
+        sh.batch_update({"requests": requests})
+        
     # Actualizar Histórico
     df_hist = df_vuelo.copy()
     df_hist.insert(0, "ARCHIVO", nombre_pdf)
