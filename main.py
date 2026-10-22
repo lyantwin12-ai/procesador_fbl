@@ -296,13 +296,25 @@ def guardar_resultados(sh, resultado):
         format_cell_range(ws_vuelo, "A11:D11", gris)
         format_cell_range(ws_vuelo, "A13:G13", gris)
 
+        rangos_p1 = []
+        rangos_p2 = []
+        rangos_p3 = []
+
         for fila_excel, prioridad in enumerate(df_vuelo['P'].values, start=14):
+            rango = f"A{fila_excel}:G{fila_excel}"
             if prioridad == 1:
-                format_cell_range(ws_vuelo, f"A{fila_excel}:G{fila_excel}", rojo)
+                rangos_p1.append(rango)
             elif prioridad == 2:
-                format_cell_range(ws_vuelo, f"A{fila_excel}:G{fila_excel}", amarillo)
+                rangos_p2.append(rango)
             elif prioridad == 3:
-                format_cell_range(ws_vuelo, f"A{fila_excel}:G{fila_excel}", verde)
+                rangos_p3.append(rango)
+
+        if rangos_p1:
+            format_cell_range(ws_vuelo, ",".join(rangos_p1), rojo)
+        if rangos_p2:
+            format_cell_range(ws_vuelo, ",".join(rangos_p2), amarillo)
+        if rangos_p3:
+            format_cell_range(ws_vuelo, ",".join(rangos_p3), verde)
 
         ws_vuelo.freeze(rows=13)
 
