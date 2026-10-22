@@ -279,7 +279,6 @@ def guardar_resultados(sh, resultado):
 
     set_with_dataframe(ws_vuelo, df_vuelo, row=13, include_index=False)
 
-    # Formato visual
     # Formato visual optimizado mediante un único batch_update
     if len(df_vuelo) > 0:
         format_cell_range(ws_vuelo, "A1:B4", CellFormat(textFormat=TextFormat(bold=True, fontSize=12)))
