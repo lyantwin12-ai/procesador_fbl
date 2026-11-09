@@ -121,24 +121,33 @@ async def run():
 
         print("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
-            selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
-            await page.wait_for_selector(selector_email, timeout=30000)
-            await page.fill(selector_email, USUARIO)
+            # 1. Email
+            email_input = page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]')
+            await email_input.wait_for(state="visible", timeout=30000)
+            await email_input.fill(USUARIO)
             await page.click('input[type="submit"], input[id="idSIButton9"]')
 
-            # Contraseña
-            selector_pass = 'input[type="password"], input[name="passwd"]'
-            await page.wait_for_selector(selector_pass, timeout=30000)
-            await page.fill(selector_pass, PASSWORD)
+            # Esperar a que la redirección de Microsoft (FIDO/Bridge) termine de animar
+            print("[INFO] Esperando transición a pantalla de contraseña...")
+            await page.wait_for_timeout(3000)
+
+            # 2. Contraseña (Esperar explícitamente a que sea visible)
+            pass_input = page.locator('input[name="passwd"], input[type="password"]')
+            await pass_input.wait_for(state="visible", timeout=30000)
+            await pass_input.fill(PASSWORD)
             await page.click('input[type="submit"], input[id="idSIButton9"]')
 
-            # Token 2FA
+            # Esperar transición a OTP
+            await page.wait_for_timeout(3000)
+
+            # 3. Token 2FA
             print("[INFO] 2. Ingresando token 2FA...")
-            selector_otp = 'input[name="otpcodes"], input[name="otc"]'
-            await page.wait_for_selector(selector_otp, timeout=30000)
-            await page.fill(selector_otp, token_2fa)
+            otp_input = page.locator('input[name="otpcodes"], input[name="otc"]')
+            await otp_input.wait_for(state="visible", timeout=30000)
+            await otp_input.fill(token_2fa)
             await page.click('input[type="submit"], input[id="idSIButton9"]')
 
+            # Mantener sesión (opcional)
             try:
                 btn_stay = page.locator('#idSIButton9, input[value="Yes"]')
                 if await btn_stay.is_visible(timeout=5000):
