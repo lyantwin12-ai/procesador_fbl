@@ -8,3 +8,5 @@ gspread-dataframe
 gspread-formatting
 google-auth
 numpy
+playwright
+pyotp
