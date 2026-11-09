@@ -121,35 +121,39 @@ async def run():
 
         print("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
-            # 1. Email
-            email_input = page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]')
+            # 1. EMAIL
+            email_input = page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]').first
             await email_input.wait_for(state="visible", timeout=30000)
             await email_input.fill(USUARIO)
-            await page.click('input[type="submit"], input[id="idSIButton9"]')
+            await page.wait_for_timeout(1000)
+            await email_input.press("Enter")
 
-            # Esperar a que la redirección de Microsoft (FIDO/Bridge) termine de animar
             print("[INFO] Esperando transición a pantalla de contraseña...")
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(4000)
 
-            # 2. Contraseña (Esperar explícitamente a que sea visible)
-            pass_input = page.locator('input[name="passwd"], input[type="password"]')
-            await pass_input.wait_for(state="visible", timeout=30000)
+            # 2. CONTRASEÑA
+            pass_input = page.locator('input[name="passwd"], input[type="password"]').first
+            # Forzar visibilidad si estuviera oculto por animación de Microsoft
+            await page.wait_for_selector('input[name="passwd"], input[type="password"]', state="attached", timeout=30000)
             await pass_input.fill(PASSWORD)
-            await page.click('input[type="submit"], input[id="idSIButton9"]')
+            await page.wait_for_timeout(1000)
+            await pass_input.press("Enter")
 
-            # Esperar transición a OTP
-            await page.wait_for_timeout(3000)
+            print("[INFO] Esperando transición a token 2FA...")
+            await page.wait_for_timeout(4000)
 
-            # 3. Token 2FA
+            # 3. TOKEN 2FA
             print("[INFO] 2. Ingresando token 2FA...")
-            otp_input = page.locator('input[name="otpcodes"], input[name="otc"]')
+            otp_input = page.locator('input[name="otpcodes"], input[name="otc"]').first
             await otp_input.wait_for(state="visible", timeout=30000)
             await otp_input.fill(token_2fa)
-            await page.click('input[type="submit"], input[id="idSIButton9"]')
+            await page.wait_for_timeout(1000)
+            await otp_input.press("Enter")
 
-            # Mantener sesión (opcional)
+            # Mantener sesión activada si aparece el diálogo de Microsoft
             try:
-                btn_stay = page.locator('#idSIButton9, input[value="Yes"]')
+                await page.wait_for_timeout(3000)
+                btn_stay = page.locator('#idSIButton9, input[value="Yes"]').first
                 if await btn_stay.is_visible(timeout=5000):
                     await btn_stay.click()
             except Exception:
