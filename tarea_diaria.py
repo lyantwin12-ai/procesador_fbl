@@ -106,13 +106,13 @@ async def run():
         page = await context.new_page()
 
         print("[INFO] 1. Navegando al portal Croamis...")
-        await page.goto(URL_REPORT, wait_until="domcontentloaded", timeout=60000)
+        await page.goto(URL_REPORT, wait_until="load", timeout=60000)
         await page.wait_for_timeout(3000)
 
-        # Botón de ingreso inicial si aplica
+        # Botón de ingreso inicial si la landing lo exige
         try:
             sso_btn = page.locator('button:has-text("Login"), a:has-text("Login"), #loginButton').first
-            if await sso_btn.is_visible(timeout=5000):
+            if await sso_btn.is_visible(timeout=3000):
                 print("[INFO] Detectado botón de ingreso inicial. Haciendo clic...")
                 await sso_btn.click()
                 await page.wait_for_timeout(3000)
@@ -126,21 +126,23 @@ async def run():
             await email_input.wait_for(state="visible", timeout=30000)
             await email_input.fill(USUARIO)
             await page.wait_for_timeout(1000)
-            await email_input.press("Enter")
+            
+            # Clic explícito en botón Siguiente
+            btn_next = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            await btn_next.click()
 
             print("[INFO] Esperando transición a pantalla de contraseña...")
-            await page.wait_for_timeout(4000)
-
-            # 2. CONTRASEÑA
+            
+            # 2. CONTRASEÑA (Esperar a que esté visible y editable)
             pass_input = page.locator('input[name="passwd"], input[type="password"]').first
-            # Forzar visibilidad si estuviera oculto por animación de Microsoft
-            await page.wait_for_selector('input[name="passwd"], input[type="password"]', state="attached", timeout=30000)
+            await pass_input.wait_for(state="visible", timeout=30000)
+            await page.wait_for_timeout(1000)
             await pass_input.fill(PASSWORD)
             await page.wait_for_timeout(1000)
-            await pass_input.press("Enter")
-
-            print("[INFO] Esperando transición a token 2FA...")
-            await page.wait_for_timeout(4000)
+            
+            # Clic explícito en botón Iniciar Sesión
+            btn_pass_submit = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            await btn_pass_submit.click()
 
             # 3. TOKEN 2FA
             print("[INFO] 2. Ingresando token 2FA...")
@@ -148,9 +150,11 @@ async def run():
             await otp_input.wait_for(state="visible", timeout=30000)
             await otp_input.fill(token_2fa)
             await page.wait_for_timeout(1000)
-            await otp_input.press("Enter")
+            
+            btn_otp_submit = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            await btn_otp_submit.click()
 
-            # Mantener sesión activada si aparece el diálogo de Microsoft
+            # Confirmación de "Mantener la sesión iniciada"
             try:
                 await page.wait_for_timeout(3000)
                 btn_stay = page.locator('#idSIButton9, input[value="Yes"]').first
