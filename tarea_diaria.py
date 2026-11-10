@@ -208,28 +208,56 @@ async def run():
             log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(4)
 
-            # BYPASS FIDO/PASSKEY (Paso preventivo directo antes de buscar contraseña)
-            log("[INFO] Verificando presencia de bypass FIDO/Passkey...")
-            for _ in range(4):
+            # FORZAR CAMBIO A CONTRASEÑA O OTRAS FORMAS DE INICIAR SESIÓN
+            log("[INFO] Verificando presencia de opciones de inicio de sesión / bypass Passkey...")
+            selectors_switch = [
+                '#idA_PWD_SwitchToPassword',
+                '#signInAnotherWay',
+                'a:has-text("Use your password instead")',
+                'a:has-text("Usar tu contraseña")',
+                'a:has-text("Otras formas de iniciar sesión")',
+                'a:has-text("Other ways to sign in")',
+                '#cancelLink'
+            ]
+
+            for _ in range(5):
+                switched = False
                 for p_active in context.pages:
                     for f in [p_active] + p_active.frames:
-                        try:
-                            btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password"), #cancelLink').first
-                            if await btn_switch.count() > 0:
-                                log("[INFO] ✅ Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
-                                await btn_switch.click(force=True)
-                                await asyncio.sleep(2)
-                                break
-                        except Exception:
-                            pass
+                        for s_sel in selectors_switch:
+                            try:
+                                btn_switch = f.locator(s_sel).first
+                                if await btn_switch.count() > 0 and await btn_switch.is_visible():
+                                    log(f"[INFO] ✅ Botón de cambio detectado ('{s_sel}'). Hiciendo clic para forzar contraseña...")
+                                    await btn_switch.click(force=True)
+                                    switched = True
+                                    await asyncio.sleep(2)
+                                    break
+                            except Exception:
+                                pass
+                        if switched:
+                            break
+                    if switched:
+                        break
                 await asyncio.sleep(1)
+
+            # Si hizo clic en "Otras formas de iniciar sesión", hacer clic en "Password"
+            for p_active in context.pages:
+                for f in [p_active] + p_active.frames:
+                    try:
+                        opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Contraseña"), div:has-text("Password")').first
+                        if await opt_pwd.count() > 0 and await opt_pwd.is_visible():
+                            log("[INFO] Seleccionando método 'Contraseña' de la lista...")
+                            await opt_pwd.click(force=True)
+                            await asyncio.sleep(2)
+                    except Exception:
+                        pass
 
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
             selector_pass = 'input[name="passwd"], input[type="password"]'
-            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=30000)
+            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             
-            # Forzar foco y escribir la contraseña vía teclado de Playwright
             await pass_input.focus()
             await pass_input.fill(PASSWORD, force=True)
             log("[INFO] Contraseña ingresada. Enviando formulario...")
