@@ -158,15 +158,33 @@ async def run():
 
         await asyncio.sleep(3)
 
-        # Hacemos clic explícito en "LOGIN WITH SSO"
-        try:
-            sso_btn = page.locator('text="LOGIN WITH SSO", button:has-text("LOGIN WITH SSO"), a:has-text("LOGIN WITH SSO"), input[value*="SSO"]').first
-            await sso_btn.wait_for(state="visible", timeout=10000)
-            log("[INFO] Clic en botón 'LOGIN WITH SSO'...")
-            await sso_btn.click()
-            await asyncio.sleep(4)
-        except Exception as e:
-            log(f"[INFO] No se requirió clic manual en SSO o ya redirigió: {e}")
+        # Clic robusto en "LOGIN WITH SSO"
+        log("[INFO] Buscando botón 'LOGIN WITH SSO'...")
+        sso_clicked = False
+        for _ in range(10):
+            for p_active in context.pages:
+                for f in [p_active] + p_active.frames:
+                    try:
+                        # Buscar cualquier elemento que contenga la palabra SSO o LOGIN WITH SSO
+                        btn_sso = f.locator('button, a, div, input, span').filter(has_text="SSO").first
+                        if await btn_sso.is_visible():
+                            log("[INFO] ✅ Botón 'LOGIN WITH SSO' localizado. Ejecutando clic...")
+                            await btn_sso.click(force=True)
+                            sso_clicked = True
+                            break
+                    except Exception:
+                        pass
+                if sso_clicked:
+                    break
+            if sso_clicked:
+                break
+            await asyncio.sleep(1)
+
+        if not sso_clicked:
+            log("[INFO] Advertencia: No se detectó botón SSO visible, continuando flujo...")
+
+        log("[INFO] Procesando redirección a Microsoft SSO...")
+        await asyncio.sleep(5)
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
