@@ -99,24 +99,25 @@ def subir_a_google_drive(ruta_local, nombre_archivo):
     except Exception as e:
         print(f"   ❌ Error subiendo a Google Drive: {e}")
 
-async def obtener_locator_login(page_or_context, selector, timeout=30000):
-    """Busca un selector en la página principal o dentro de cualquier iframe."""
+async def obtener_locator_login(context, selector, timeout=45000):
+    """Busca un selector dinámico a través de todas las páginas y frames activos."""
     start_time = asyncio.get_event_loop().time()
     while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
-        pages = page_or_context.pages if hasattr(page_or_context, "pages") else [page_or_context]
-        for p in pages:
+        for p in context.pages:
             try:
+                # 1. Intentar selector adjunto en DOM principal
                 loc = p.locator(selector).first
-                if await loc.is_visible():
+                if await loc.count() > 0:
                     return loc, p
+                # 2. Intentar en frames internos
                 for frame in p.frames:
                     f_loc = frame.locator(selector).first
-                    if await f_loc.is_visible():
+                    if await f_loc.count() > 0:
                         return f_loc, frame
             except Exception:
                 pass
         await asyncio.sleep(0.5)
-    raise TimeoutError(f"No se encontró el selector '{selector}' en ningún frame ni página.")
+    raise TimeoutError(f"No se encontró el selector '{selector}' en ningún frame ni página activa.")
 
 async def run():
     if not TOTP_SECRET or not USUARIO or not PASSWORD:
@@ -150,7 +151,7 @@ async def run():
         await page.goto(URL_REPORT, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(3000)
 
-        # Si Croamis presenta una landing con botón explícito de login corporativo
+        # Clic en botón SSO inicial si aplica
         try:
             sso_btn = page.locator('button:has-text("Login"), a:has-text("Login"), input[value*="Login"]').first
             if await sso_btn.is_visible(timeout=4000):
@@ -171,20 +172,24 @@ async def run():
             btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
             
-            # Pausa de transición para permitir la animación y carga de Microsoft SSO
-            print("[INFO] Esperando transición de la pantalla de contraseña...")
-            await asyncio.sleep(4)
+            print("[INFO] Procesando redirección post-correo...")
+            await asyncio.sleep(5)
 
-            # Re-evaluar si Microsoft solicita Passkey/FIDO o muestra botón de switch a contraseña
-            for _ in range(5):
-                for p in context.pages:
-                    for f in [p] + p.frames:
+            # BYPASS FIDO/PASSKEY SI APARECE REDIRECCIÓN BRIDGE O BOTÓN DE CAMBIO
+            for _ in range(6):
+                for p_active in context.pages:
+                    url_curr = p_active.url.lower()
+                    if "fido" in url_curr or "reprocess" in url_curr:
+                        print(f"[INFO] Detectada URL FIDO ({url_curr}). Intentando bypass a contraseña...")
+                    
+                    for f in [p_active] + p_active.frames:
                         try:
-                            btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password")').first
+                            # Buscar opciones para volver a contraseña
+                            btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password"), #cancelLink').first
                             if await btn_switch.is_visible():
-                                print("[INFO] Se detectó solicitud Passkey/FIDO. Forzando cambio a contraseña...")
+                                print("[INFO] Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
                                 await btn_switch.click()
-                                await asyncio.sleep(2)
+                                await asyncio.sleep(3)
                                 break
                         except Exception:
                             pass
@@ -193,8 +198,10 @@ async def run():
             # 2. CONTRASEÑA
             print("[INFO] Ingresando contraseña...")
             selector_pass = 'input[name="passwd"], input[type="password"]'
-            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=30000)
-            await pass_input.fill(PASSWORD)
+            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
+            
+            # Utilizar force=True en caso de clases CSS de transición (moveOffScreen)
+            await pass_input.fill(PASSWORD, force=True)
             await page.wait_for_timeout(1000)
 
             btn_pass_submit = frame_pass.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
@@ -205,7 +212,7 @@ async def run():
             print("[INFO] 2. Ingresando token 2FA...")
             selector_otp = 'input[name="otpcodes"], input[name="otc"]'
             otp_input, frame_otp = await obtener_locator_login(context, selector_otp, timeout=30000)
-            await otp_input.fill(token_2fa)
+            await otp_input.fill(token_2fa, force=True)
             await page.wait_for_timeout(1000)
 
             btn_otp_submit = frame_otp.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
