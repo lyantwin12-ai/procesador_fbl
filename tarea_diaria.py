@@ -71,7 +71,7 @@ def log(mensaje):
     print(mensaje, flush=True)
 
 async def guardar_captura_final(context, fallback_page=None, etiqueta=""):
-    """Toma una captura de la ultima pagina activa y la guarda en error_login.png."""
+    """Toma una captura de la última página activa y la guarda en error_login.png."""
     try:
         page_to_capture = context.pages[-1] if (context and context.pages) else fallback_page
         if page_to_capture:
@@ -205,43 +205,65 @@ async def run():
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
-            # 1. EMAIL
-            selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
-            email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=30000)
-            log("[INFO] Campo de correo localizado. Rellenando...")
-            await email_input.fill(USUARIO)
-            await asyncio.sleep(1)
-
-            btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
-            await btn_next.click()
-            
-            log("[INFO] Procesando redirección post-correo...")
-            await asyncio.sleep(4)
-
-            # BYPASS PANTALLA PASSKEY / PIN Y NAVEGACIÓN A OPCIONES DE LOGIN
-            log("[INFO] Verificando si Microsoft solicita Passkey / PIN...")
+            # PANTALLA 1: "Pick an account" o Campo de Email
             for _ in range(5):
+                account_selected = False
+                for p_active in reversed(context.pages):
+                    for f in [p_active] + p_active.frames:
+                        try:
+                            # Si muestra la lista de cuentas "Pick an account"
+                            account_tile = f.locator(f'div[data-test-id="{USUARIO}"], div:has-text("{USUARIO}"), .tile-container').first
+                            if await account_tile.count() > 0 and await account_tile.is_visible():
+                                log(f"[INFO] ✅ Seleccionando cuenta corporativa '{USUARIO}' de la lista...")
+                                await account_tile.click(force=True)
+                                account_selected = True
+                                await asyncio.sleep(3)
+                                break
+                        except Exception:
+                            pass
+                    if account_selected:
+                        break
+                if account_selected:
+                    break
+                await asyncio.sleep(1)
+
+            # Si no estaba en "Pick an account", llenar el input de correo manualmente
+            try:
+                selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
+                email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=5000)
+                log("[INFO] Campo de correo localizado. Rellenando...")
+                await email_input.fill(USUARIO)
+                await asyncio.sleep(1)
+
+                btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+                await btn_next.click()
+                await asyncio.sleep(3)
+            except Exception:
+                log("[INFO] Omitiendo ingreso manual de correo (cuenta ya seleccionada o no requerida).")
+
+            log("[INFO] Procesando redirección post-correo...")
+            await asyncio.sleep(3)
+
+            # PANTALLA 2: "Verify your identity" -> Forzar Cancel / Usar Contraseña
+            log("[INFO] Verificando presencia de pantalla de Passkey / PIN...")
+            for _ in range(6):
                 bypass_done = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
-                            # 1. Clic en flecha atrás si está la pantalla de Passkey
-                            passkey_text = f.locator('text="Face, fingerprint, PIN or security key"')
-                            if await passkey_text.count() > 0:
-                                log("[INFO] ⚠️ Detectada pantalla de Passkey/PIN. Clic en flecha atrás (←)...")
-                                back_btn = f.locator('#idBtn_Back, button[aria-label*="Back"], button[aria-label*="atrás"], .backButton, #idA_PWD_SwitchToPassword').first
-                                if await back_btn.count() > 0:
-                                    await back_btn.click(force=True)
-                                else:
-                                    await f.evaluate('() => { (document.querySelector("#idBtn_Back") || document.querySelector(".backButton") || document.querySelector("button")).click(); }')
+                            # 1. Clic en Cancel de la pantalla 'Verify your identity'
+                            cancel_btn = f.locator('button:has-text("Cancel"), #cancelLink, input[value="Cancel"]').first
+                            if await cancel_btn.count() > 0 and await cancel_btn.is_visible():
+                                log("[INFO] ⚠️ Clic en 'Cancel' de la pantalla de Passkey para derivar a contraseña...")
+                                await cancel_btn.click(force=True)
                                 bypass_done = True
                                 await asyncio.sleep(3)
                                 break
 
-                            # 2. Clic directo a contraseña si existe enlace directo
+                            # 2. Clic en enlace 'Use your password instead' u otras opciones
                             btn_switch = f.locator('#idA_PWD_SwitchToPassword, #signInAnotherWay, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña")').first
                             if await btn_switch.count() > 0 and await btn_switch.is_visible():
-                                log("[INFO] ✅ Botón directo a contraseña detectado. Haciendo clic...")
+                                log("[INFO] ✅ Botón de cambio a contraseña detectado. Haciendo clic...")
                                 await btn_switch.click(force=True)
                                 bypass_done = True
                                 await asyncio.sleep(3)
@@ -255,18 +277,18 @@ async def run():
                     break
                 await asyncio.sleep(1)
 
-            # Clic explícito en la opción "Password" de la lista de opciones
-            log("[INFO] Seleccionando método 'Password' de la lista...")
+            # Clic explícito en la opción "Password" si muestra el menú de métodos
+            log("[INFO] Verificando menú de métodos de inicio de sesión...")
             for _ in range(4):
                 pwd_option_clicked = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
                             opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Password"), div:has-text("Contraseña"), [id*="Password"]').first
-                            if await opt_pwd.count() > 0:
+                            if await opt_pwd.count() > 0 and await opt_pwd.is_visible():
                                 await opt_pwd.click(force=True)
                                 pwd_option_clicked = True
-                                log("[INFO] ✅ Método 'Password' seleccionado con éxito.")
+                                log("[INFO] ✅ Opción 'Password' seleccionada de la lista.")
                                 await asyncio.sleep(2)
                                 break
                         except Exception:
@@ -279,8 +301,6 @@ async def run():
 
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
-            
-            # 📸 Captura previa instantánea al llegar al punto de contraseña
             await guardar_captura_final(context, page, "Paso Contraseña")
 
             selector_pass = 'input[name="passwd"], input[type="password"]'
@@ -296,13 +316,11 @@ async def run():
             await btn_pass_submit.click()
             await asyncio.sleep(4)
 
-            # 3. TOKEN 2FA
-            log("[INFO] 2. Ingresando token 2FA...")
-            
-            # 📸 Captura previa instantánea al llegar al punto 2FA
-            await guardar_captura_final(context, page, "Paso 2FA")
+            # 3. TOKEN 2FA (AUTHENTICATOR KEY)
+            log("[INFO] 2. Ingresando token 2FA de Authenticator...")
+            await guardar_captura_final(context, page, "Paso 2FA Authenticator")
 
-            selector_otp = 'input[name="otpcodes"], input[name="otc"]'
+            selector_otp = 'input[name="otpcodes"], input[name="otc"], input[type="tel"]'
             otp_input, frame_otp = await obtener_locator_login(context, selector_otp, timeout=30000)
             await otp_input.fill(token_2fa, force=True)
             await asyncio.sleep(1)
@@ -333,7 +351,6 @@ async def run():
 
         await report_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
         
-        # 📸 Captura tras ingresar exitosamente a Croamis
         await guardar_captura_final(context, report_page, "Portal Croamis Cargado")
 
         # Bucle de descarga por Posta
