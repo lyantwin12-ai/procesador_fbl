@@ -243,6 +243,10 @@ async def run():
 
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
+            # 📸 Captura de pantalla preventiva instantánea:
+            await context.pages[-1].screenshot(path="error_login.png")
+            selector_pass = 'input[name="passwd"], input[type="password"]'
+            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             log("[INFO] Campo de contraseña localizado. Rellenando...")
