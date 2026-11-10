@@ -99,22 +99,22 @@ def subir_a_google_drive(ruta_local, nombre_archivo):
     except Exception as e:
         print(f"   ❌ Error subiendo a Google Drive: {e}")
 
-async def obtener_locator_login(page_or_context, selector, timeout=15000):
+async def obtener_locator_login(page_or_context, selector, timeout=30000):
     """Busca un selector en la página principal o dentro de cualquier iframe."""
     start_time = asyncio.get_event_loop().time()
     while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
-        # 1. Probar en la lista de páginas abiertas
         pages = page_or_context.pages if hasattr(page_or_context, "pages") else [page_or_context]
         for p in pages:
-            # En la página principal
-            loc = p.locator(selector).first
-            if await loc.is_visible():
-                return loc, p
-            # En los frames
-            for frame in p.frames:
-                f_loc = frame.locator(selector).first
-                if await f_loc.is_visible():
-                    return f_loc, frame
+            try:
+                loc = p.locator(selector).first
+                if await loc.is_visible():
+                    return loc, p
+                for frame in p.frames:
+                    f_loc = frame.locator(selector).first
+                    if await f_loc.is_visible():
+                        return f_loc, frame
+            except Exception:
+                pass
         await asyncio.sleep(0.5)
     raise TimeoutError(f"No se encontró el selector '{selector}' en ningún frame ni página.")
 
@@ -170,16 +170,25 @@ async def run():
 
             btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
-            await page.wait_for_timeout(3000)
+            
+            # Pausa de transición para permitir la animación y carga de Microsoft SSO
+            print("[INFO] Esperando transición de la pantalla de contraseña...")
+            await asyncio.sleep(4)
 
-            # Bypass FIDO/Passkey
-            try:
-                btn_use_pass = frame_email.locator('a[id="idA_PWD_SwitchToPassword"]').first
-                if await btn_use_pass.is_visible(timeout=3000):
-                    await btn_use_pass.click()
-                    await page.wait_for_timeout(2000)
-            except Exception:
-                pass
+            # Re-evaluar si Microsoft solicita Passkey/FIDO o muestra botón de switch a contraseña
+            for _ in range(5):
+                for p in context.pages:
+                    for f in [p] + p.frames:
+                        try:
+                            btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password")').first
+                            if await btn_switch.is_visible():
+                                print("[INFO] Se detectó solicitud Passkey/FIDO. Forzando cambio a contraseña...")
+                                await btn_switch.click()
+                                await asyncio.sleep(2)
+                                break
+                        except Exception:
+                            pass
+                await asyncio.sleep(1)
 
             # 2. CONTRASEÑA
             print("[INFO] Ingresando contraseña...")
@@ -190,7 +199,7 @@ async def run():
 
             btn_pass_submit = frame_pass.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_pass_submit.click()
-            await page.wait_for_timeout(3000)
+            await asyncio.sleep(4)
 
             # 3. TOKEN 2FA
             print("[INFO] 2. Ingresando token 2FA...")
@@ -204,7 +213,7 @@ async def run():
 
             # Confirmación "Keep me signed in"
             try:
-                await page.wait_for_timeout(3000)
+                await asyncio.sleep(3)
                 btn_stay = frame_otp.locator('#idSIButton9, input[value="Yes"]').first
                 if await btn_stay.is_visible(timeout=5000):
                     await btn_stay.click()
@@ -213,7 +222,6 @@ async def run():
 
         except Exception as e:
             print(f"❌ Error en autenticación: {e}")
-            # Guardar captura de error en la página activa
             active_p = context.pages[-1] if context.pages else page
             await active_p.screenshot(path="error_login.png")
             raise e
