@@ -211,7 +211,6 @@ async def run():
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
-                            # Si muestra la lista de cuentas "Pick an account"
                             account_tile = f.locator(f'div[data-test-id="{USUARIO}"], div:has-text("{USUARIO}"), .tile-container').first
                             if await account_tile.count() > 0 and await account_tile.is_visible():
                                 log(f"[INFO] ✅ Seleccionando cuenta corporativa '{USUARIO}' de la lista...")
@@ -244,23 +243,36 @@ async def run():
             log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(3)
 
-            # PANTALLA 2: "Verify your identity" -> Forzar Cancel / Usar Contraseña
-            log("[INFO] Verificando presencia de pantalla de Passkey / PIN...")
+            # PANTALLA 2 & 3: MANEJO DE "Sign-in options" Y "Verify your identity"
+            log("[INFO] Verificando presencia de 'Sign-in options' / Passkey / PIN...")
             for _ in range(6):
                 bypass_done = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
-                            # 1. Clic en Cancel de la pantalla 'Verify your identity'
+                            # 1. SI APARECE LA PANTALLA "Sign-in options" -> Clic en el botón "Back"
+                            signin_options_text = f.locator('text="Sign-in options"')
+                            if await signin_options_text.count() > 0:
+                                log("[INFO] ⚠️ Detectada pantalla 'Sign-in options'. Clic en botón 'Back'...")
+                                btn_back = f.locator('#idBtn_Back, button:has-text("Back"), input[value="Back"]').first
+                                if await btn_back.count() > 0:
+                                    await btn_back.click(force=True)
+                                else:
+                                    await f.evaluate('() => { (document.querySelector("#idBtn_Back") || document.querySelector("input[value=\'Back\']") || document.querySelector("button")).click(); }')
+                                bypass_done = True
+                                await asyncio.sleep(3)
+                                break
+
+                            # 2. SI APARECE PANTALLA "Verify your identity" -> Clic en Cancel
                             cancel_btn = f.locator('button:has-text("Cancel"), #cancelLink, input[value="Cancel"]').first
                             if await cancel_btn.count() > 0 and await cancel_btn.is_visible():
-                                log("[INFO] ⚠️ Clic en 'Cancel' de la pantalla de Passkey para derivar a contraseña...")
+                                log("[INFO] ⚠️ Clic en 'Cancel' para salir del flujo de Passkey...")
                                 await cancel_btn.click(force=True)
                                 bypass_done = True
                                 await asyncio.sleep(3)
                                 break
 
-                            # 2. Clic en enlace 'Use your password instead' u otras opciones
+                            # 3. SI EXISTE ENLACE DIRECTO A CONTRASEÑA
                             btn_switch = f.locator('#idA_PWD_SwitchToPassword, #signInAnotherWay, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña")').first
                             if await btn_switch.count() > 0 and await btn_switch.is_visible():
                                 log("[INFO] ✅ Botón de cambio a contraseña detectado. Haciendo clic...")
@@ -277,7 +289,7 @@ async def run():
                     break
                 await asyncio.sleep(1)
 
-            # Clic explícito en la opción "Password" si muestra el menú de métodos
+            # Clic explícito en la opción "Password" si muestra la lista de métodos tras volver atrás
             log("[INFO] Verificando menú de métodos de inicio de sesión...")
             for _ in range(4):
                 pwd_option_clicked = False
