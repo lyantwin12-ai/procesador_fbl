@@ -105,11 +105,9 @@ async def obtener_locator_login(context, selector, timeout=45000):
     while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
         for p in context.pages:
             try:
-                # 1. Intentar selector adjunto en DOM principal
                 loc = p.locator(selector).first
                 if await loc.count() > 0:
                     return loc, p
-                # 2. Intentar en frames internos
                 for frame in p.frames:
                     f_loc = frame.locator(selector).first
                     if await f_loc.count() > 0:
@@ -120,6 +118,7 @@ async def obtener_locator_login(context, selector, timeout=45000):
     raise TimeoutError(f"No se encontró el selector '{selector}' en ningún frame ni página activa.")
 
 async def run():
+    print("[INFO] Iniciando ejecucion del script tarea_diaria.py...")
     if not TOTP_SECRET or not USUARIO or not PASSWORD:
         raise ValueError("Error: Faltan variables de entorno requeridas en Render.")
 
@@ -129,7 +128,7 @@ async def run():
     totp = pyotp.TOTP(TOTP_SECRET)
     token_2fa = totp.now()
     fecha_hoy = datetime.now().strftime("%d-%b-%Y").upper()
-    print(f"[INFO] Código 2FA generado exitosamente.")
+    print(f"[INFO] Código 2FA generado exitosamente: {token_2fa[:2]}***")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -148,8 +147,12 @@ async def run():
         page = await context.new_page()
 
         print("[INFO] 1. Navegando al portal Croamis...")
-        await page.goto(URL_REPORT, wait_until="domcontentloaded", timeout=60000)
-        await page.wait_for_timeout(3000)
+        try:
+            await page.goto(URL_REPORT, wait_until="commit", timeout=45000)
+        except Exception as e:
+            print(f"[INFO] Advertencia en goto inicial: {e}")
+
+        await asyncio.sleep(4)
 
         # Clic en botón SSO inicial si aplica
         try:
@@ -157,7 +160,7 @@ async def run():
             if await sso_btn.is_visible(timeout=4000):
                 print("[INFO] Clic en botón de ingreso corporativo...")
                 await sso_btn.click()
-                await page.wait_for_timeout(3000)
+                await asyncio.sleep(3)
         except Exception:
             pass
 
@@ -166,8 +169,9 @@ async def run():
             # 1. EMAIL
             selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
             email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=30000)
+            print("[INFO] Campo de correo localizado. Rellenando...")
             await email_input.fill(USUARIO)
-            await page.wait_for_timeout(1000)
+            await asyncio.sleep(1)
 
             btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
@@ -175,16 +179,11 @@ async def run():
             print("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(5)
 
-            # BYPASS FIDO/PASSKEY SI APARECE REDIRECCIÓN BRIDGE O BOTÓN DE CAMBIO
-            for _ in range(6):
+            # BYPASS FIDO/PASSKEY
+            for _ in range(5):
                 for p_active in context.pages:
-                    url_curr = p_active.url.lower()
-                    if "fido" in url_curr or "reprocess" in url_curr:
-                        print(f"[INFO] Detectada URL FIDO ({url_curr}). Intentando bypass a contraseña...")
-                    
                     for f in [p_active] + p_active.frames:
                         try:
-                            # Buscar opciones para volver a contraseña
                             btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password"), #cancelLink').first
                             if await btn_switch.is_visible():
                                 print("[INFO] Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
@@ -199,10 +198,8 @@ async def run():
             print("[INFO] Ingresando contraseña...")
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
-            
-            # Utilizar force=True en caso de clases CSS de transición (moveOffScreen)
             await pass_input.fill(PASSWORD, force=True)
-            await page.wait_for_timeout(1000)
+            await asyncio.sleep(1)
 
             btn_pass_submit = frame_pass.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_pass_submit.click()
@@ -213,7 +210,7 @@ async def run():
             selector_otp = 'input[name="otpcodes"], input[name="otc"]'
             otp_input, frame_otp = await obtener_locator_login(context, selector_otp, timeout=30000)
             await otp_input.fill(token_2fa, force=True)
-            await page.wait_for_timeout(1000)
+            await asyncio.sleep(1)
 
             btn_otp_submit = frame_otp.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_otp_submit.click()
@@ -235,7 +232,11 @@ async def run():
 
         print("[INFO] 3. Esperando la carga de Flight Schedule Report (SCH012)...")
         report_page = context.pages[-1] if context.pages else page
-        await report_page.goto(URL_REPORT, wait_until="load", timeout=60000)
+        try:
+            await report_page.goto(URL_REPORT, wait_until="commit", timeout=60000)
+        except Exception:
+            pass
+
         await report_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
 
         # Bucle de descarga por Posta
@@ -265,7 +266,7 @@ async def run():
             print(f"   ✅ Descargado localmente: {nombre_archivo}")
 
             subir_a_google_drive(ruta_guardado, nombre_archivo)
-            await report_page.wait_for_timeout(1500)
+            await asyncio.sleep(1.5)
 
         print(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente para las 28 postas.")
         await browser.close()
