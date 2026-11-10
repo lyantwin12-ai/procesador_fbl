@@ -4,6 +4,7 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta
+import pyotp
 from playwright.async_api import async_playwright
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -45,14 +46,14 @@ def run_health_server():
 # ---------------------------------------------------------
 # 1. Variables de Entorno y Configuración
 # ---------------------------------------------------------
+TOTP_SECRET = os.environ.get("CROAMIS_2FA_SECRET")
+USUARIO = os.environ.get("CROAMIS_USER")
+PASSWORD = os.environ.get("CROAMIS_PASSWORD")
 GOOGLE_JSON_STR = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 STORAGE_STATE_STR = os.environ.get("CROAMIS_STORAGE_STATE")
 
 DRIVE_FOLDER_ID = "1AuP_PBoGOTDugGKRsefAcS_QtU6exJ4X"
-
-# Postas específicas para la carpeta 'depurador barrido'
 POSTAS_DEPURADOR = ["GRU", "LIM", "SCL"]
-
 URL_REPORT = "https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH"
 
 def log(mensaje):
@@ -101,8 +102,86 @@ def subir_a_google_drive(ruta_local, nombre_archivo, parent_id=DRIVE_FOLDER_ID):
     except Exception as e:
         log(f"   ❌ Error subiendo a Google Drive: {e}")
 
+async def obtener_locator(context, selector, timeout=20000):
+    start_time = asyncio.get_event_loop().time()
+    while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
+        for p in reversed(context.pages):
+            try:
+                loc = p.locator(selector).first
+                if await loc.count() > 0:
+                    return loc, p
+                for frame in p.frames:
+                    f_loc = frame.locator(selector).first
+                    if await f_loc.count() > 0:
+                        return f_loc, frame
+            except Exception:
+                pass
+        await asyncio.sleep(0.5)
+    raise TimeoutError(f"No se encontró el selector '{selector}'.")
+
+async def realizar_login_fallback(context, page):
+    log("[INFO] 🔐 Ejecutando flujo de inicio de sesión de respaldo...")
+    if not TOTP_SECRET or not USUARIO or not PASSWORD:
+        raise ValueError("Faltan variables de entorno para autenticación (CROAMIS_USER, CROAMIS_PASSWORD, CROAMIS_2FA_SECRET).")
+
+    totp = pyotp.TOTP(TOTP_SECRET)
+    token_2fa = totp.now()
+
+    # Clic en LOGIN WITH SSO si aparece
+    try:
+        sso_btn = page.locator('text="LOGIN WITH SSO", xpath=//*[contains(text(), "SSO")]').first
+        if await sso_btn.count() > 0:
+            await sso_btn.click(force=True)
+            await asyncio.sleep(4)
+    except Exception:
+        pass
+
+    # Paso 1: Correo
+    try:
+        email_in, f_email = await obtener_locator(context, 'input[type="email"], input[name="loginfmt"], input[id="i0116"]', timeout=8000)
+        await email_in.fill(USUARIO)
+        btn_next = f_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+        await btn_next.click()
+        await asyncio.sleep(3)
+    except Exception:
+        pass
+
+    # Paso 2: Abortar Passkey / Flecha atrás
+    try:
+        for _ in range(3):
+            for p_active in reversed(context.pages):
+                for f in [p_active] + p_active.frames:
+                    btn_back = f.locator('#idBtn_Back, button[aria-label*="back"], .backButton').first
+                    if await btn_back.count() > 0 and await btn_back.is_visible():
+                        await btn_back.click(force=True)
+                        await asyncio.sleep(3)
+                        break
+    except Exception:
+        pass
+
+    # Paso 3: Contraseña
+    pass_in, f_pass = await obtener_locator(context, 'input[name="passwd"], input[type="password"]', timeout=30000)
+    await pass_in.fill(PASSWORD, force=True)
+    btn_pass = f_pass.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+    await btn_pass.click()
+    await asyncio.sleep(4)
+
+    # Paso 4: 2FA Token
+    otp_in, f_otp = await obtener_locator(context, 'input[name="otpcodes"], input[name="otc"], input[type="tel"]', timeout=20000)
+    await otp_in.fill(token_2fa, force=True)
+    btn_otp = f_otp.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+    await btn_otp.click()
+    await asyncio.sleep(4)
+
+    # Stay signed in
+    try:
+        btn_stay = page.locator('#idSIButton9, input[value="Yes"]').first
+        if await btn_stay.count() > 0:
+            await btn_stay.click(force=True)
+    except Exception:
+        pass
+
 async def descargar_reporte(page, fecha_manana, posta_codigo, ruta_destino):
-    """Descarga el reporte Excel. Si posta_codigo es None o '', limpia el campo para traer todas las postas."""
     inputs_fecha = page.locator('input[title*="Flight Period"], input[name*="date"], input[type="text"]')
     await inputs_fecha.nth(0).fill(fecha_manana)
     await inputs_fecha.nth(1).fill(fecha_manana)
@@ -126,18 +205,15 @@ async def descargar_reporte(page, fecha_manana, posta_codigo, ruta_destino):
 async def run():
     log("[INFO] Iniciando ejecución de tarea_diaria.py...")
     
-    # 1. Crear carpetas locales de destino
     dir_barrido_hdc = os.path.join(os.getcwd(), "barrido hdc")
     dir_depurador = os.path.join(os.getcwd(), "depurador barrido")
     os.makedirs(dir_barrido_hdc, exist_ok=True)
     os.makedirs(dir_depurador, exist_ok=True)
 
-    # 2. Calcular la fecha del día siguiente a la fecha local
     fecha_manana_dt = datetime.now() + timedelta(days=1)
     fecha_manana_str = fecha_manana_dt.strftime("%d-%b-%Y").upper()
     log(f"[INFO] 📅 Fecha de consulta (Mañana): {fecha_manana_str}")
 
-    # 3. Cargar estado de sesión guardado si existe en Render
     storage_state_obj = None
     if STORAGE_STATE_STR:
         try:
@@ -167,29 +243,37 @@ async def run():
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
 
-        log("[INFO] Navegando directamente al reporte de Croamis...")
+        log("[INFO] Navegando al reporte de Croamis...")
         await page.goto(URL_REPORT, wait_until="commit", timeout=60000)
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
 
-        # Verificar si la sesión guardada ingresó directamente al portal
+        # Verificación de acceso
+        autenticado = False
         try:
-            await page.wait_for_selector('text="Flight Schedule Report"', timeout=20000)
-            log("🎉 ¡Acceso directo exitoso a Croamis utilizando la sesión guardada!")
+            # Buscar si el formulario de reporte cargó adecuadamente
+            await page.wait_for_selector('input[title*="Flight Period"], input[name*="date"]', timeout=8000)
+            log("🎉 Acceso directo exitoso al reporte de Croamis.")
+            autenticado = True
         except Exception:
-            log("⚠️ La sesión guardada expiró o requirió interacción. Tomando captura de diagnóstico...")
-            await guardar_captura_final(context, page, "Sesion Expirada")
-            raise RuntimeError("La sesión expiró. Es necesario renovar CROAMIS_STORAGE_STATE.")
+            log("⚠️ La sesión cargada no abrió directamente el reporte. Ejecutando inicio de sesión automático...")
 
-        await guardar_captura_final(context, page, "Portal Croamis Cargado Exitosamente")
+        if not autenticado:
+            await realizar_login_fallback(context, page)
+            # Re-navegar tras completar autenticación
+            active_page = context.pages[-1] if context.pages else page
+            await active_page.goto(URL_REPORT, wait_until="commit", timeout=60000)
+            page = active_page
+
+        await page.wait_for_selector('input[title*="Flight Period"], input[name*="date"]', timeout=30000)
+        await guardar_captura_final(context, page, "Portal Cargado")
 
         # ---------------------------------------------------------
-        # BLOQUE 1: Archivo General Consolidado (Todas las 28 postas en un solo Excel)
+        # BLOQUE 1: Archivo General Consolidado -> Carpeta 'barrido hdc'
         # ---------------------------------------------------------
         log(f"\n📂 [1/4] Descargando Archivo General Consolidado para fecha {fecha_manana_str}...")
         nombre_general = f"Barrido_HDC_General_{fecha_manana_str}.xlsx"
         ruta_general = os.path.join(dir_barrido_hdc, nombre_general)
 
-        # Se envía None en posta para que extraiga el consolidado completo
         await descargar_reporte(page, fecha_manana_str, None, ruta_general)
         log(f"   ✅ Guardado en 'barrido hdc': {nombre_general}")
         subir_a_google_drive(ruta_general, nombre_general)
@@ -208,7 +292,7 @@ async def run():
             log(f"   ✅ Guardado en 'depurador barrido': {nombre_depurador}")
             await asyncio.sleep(2)
 
-        log(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente. Los 4 archivos fueron descargados y organizados.")
+        log(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente.")
         await browser.close()
 
 if __name__ == "__main__":
