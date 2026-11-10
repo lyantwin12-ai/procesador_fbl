@@ -205,7 +205,7 @@ async def run():
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
-            # PANTALLA 1: "Pick an account" o Campo de Email
+            # PASO 1: Llenado inicial de email o selección de cuenta
             for _ in range(5):
                 account_selected = False
                 for p_active in reversed(context.pages):
@@ -226,10 +226,9 @@ async def run():
                     break
                 await asyncio.sleep(1)
 
-            # Si no estaba en "Pick an account", llenar el input de correo manualmente
             try:
                 selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
-                email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=5000)
+                email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=4000)
                 log("[INFO] Campo de correo localizado. Rellenando...")
                 await email_input.fill(USUARIO)
                 await asyncio.sleep(1)
@@ -238,19 +237,15 @@ async def run():
                 await btn_next.click()
                 await asyncio.sleep(3)
             except Exception:
-                log("[INFO] Omitiendo ingreso manual de correo (cuenta ya seleccionada o no requerida).")
+                pass
 
-            log("[INFO] Procesando redirección post-correo...")
-            await asyncio.sleep(3)
-
-            # PANTALLA 2 & 3: MANEJO DE "Sign-in options" Y "Verify your identity"
+            # PASO 2: Manejo de Passkey / Salida con "Back"
             log("[INFO] Verificando presencia de 'Sign-in options' / Passkey / PIN...")
             for _ in range(6):
                 bypass_done = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
-                            # 1. SI APARECE LA PANTALLA "Sign-in options" -> Clic en el botón "Back"
                             signin_options_text = f.locator('text="Sign-in options"')
                             if await signin_options_text.count() > 0:
                                 log("[INFO] ⚠️ Detectada pantalla 'Sign-in options'. Clic en botón 'Back'...")
@@ -263,20 +258,10 @@ async def run():
                                 await asyncio.sleep(3)
                                 break
 
-                            # 2. SI APARECE PANTALLA "Verify your identity" -> Clic en Cancel
                             cancel_btn = f.locator('button:has-text("Cancel"), #cancelLink, input[value="Cancel"]').first
                             if await cancel_btn.count() > 0 and await cancel_btn.is_visible():
-                                log("[INFO] ⚠️ Clic en 'Cancel' para salir del flujo de Passkey...")
+                                log("[INFO] ⚠️ Clic en 'Cancel' para salir de Passkey...")
                                 await cancel_btn.click(force=True)
-                                bypass_done = True
-                                await asyncio.sleep(3)
-                                break
-
-                            # 3. SI EXISTE ENLACE DIRECTO A CONTRASEÑA
-                            btn_switch = f.locator('#idA_PWD_SwitchToPassword, #signInAnotherWay, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña")').first
-                            if await btn_switch.count() > 0 and await btn_switch.is_visible():
-                                log("[INFO] ✅ Botón de cambio a contraseña detectado. Haciendo clic...")
-                                await btn_switch.click(force=True)
                                 bypass_done = True
                                 await asyncio.sleep(3)
                                 break
@@ -289,29 +274,22 @@ async def run():
                     break
                 await asyncio.sleep(1)
 
-            # Clic explícito en la opción "Password" si muestra la lista de métodos tras volver atrás
-            log("[INFO] Verificando menú de métodos de inicio de sesión...")
-            for _ in range(4):
-                pwd_option_clicked = False
-                for p_active in reversed(context.pages):
-                    for f in [p_active] + p_active.frames:
-                        try:
-                            opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Password"), div:has-text("Contraseña"), [id*="Password"]').first
-                            if await opt_pwd.count() > 0 and await opt_pwd.is_visible():
-                                await opt_pwd.click(force=True)
-                                pwd_option_clicked = True
-                                log("[INFO] ✅ Opción 'Password' seleccionada de la lista.")
-                                await asyncio.sleep(2)
-                                break
-                        except Exception:
-                            pass
-                    if pwd_option_clicked:
-                        break
-                if pwd_option_clicked:
-                    break
+            # PASO 3: Re-ingreso de correo tras salir del flujo Passkey
+            log("[INFO] Verificando si se requiere re-ingresar correo...")
+            try:
+                selector_email_clean = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
+                email_clean, frame_clean = await obtener_locator_login(context, selector_email_clean, timeout=6000)
+                log("[INFO] ✅ Re-ingresando correo en la pantalla limpia...")
+                await email_clean.fill(USUARIO)
                 await asyncio.sleep(1)
+                
+                btn_next_clean = frame_clean.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+                await btn_next_clean.click()
+                await asyncio.sleep(4)
+            except Exception:
+                log("[INFO] No se requirió re-ingresar correo.")
 
-            # 2. CONTRASEÑA
+            # PASO 4: CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
             await guardar_captura_final(context, page, "Paso Contraseña")
 
@@ -328,7 +306,7 @@ async def run():
             await btn_pass_submit.click()
             await asyncio.sleep(4)
 
-            # 3. TOKEN 2FA (AUTHENTICATOR KEY)
+            # PASO 5: TOKEN 2FA (AUTHENTICATOR KEY)
             log("[INFO] 2. Ingresando token 2FA de Authenticator...")
             await guardar_captura_final(context, page, "Paso 2FA Authenticator")
 
@@ -362,7 +340,6 @@ async def run():
             pass
 
         await report_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
-        
         await guardar_captura_final(context, report_page, "Portal Croamis Cargado")
 
         # Bucle de descarga por Posta
