@@ -205,7 +205,7 @@ async def run():
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
-            # PASO 1: Llenado inicial de email o selección de cuenta
+            # PASO 1: Ingreso de email o selección de cuenta
             for _ in range(5):
                 account_selected = False
                 for p_active in reversed(context.pages):
@@ -239,29 +239,36 @@ async def run():
             except Exception:
                 pass
 
-            # PASO 2: Manejo de Passkey / Salida con "Back"
-            log("[INFO] Verificando presencia de 'Sign-in options' / Passkey / PIN...")
+            log("[INFO] Procesando redirección post-correo...")
+            await asyncio.sleep(3)
+
+            # PASO 2: ABORTAR PANTALLA PASSKEY ("Your device will open a security window")
+            log("[INFO] Verificando presencia de pantalla Passkey/PIN...")
             for _ in range(6):
                 bypass_done = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
-                            signin_options_text = f.locator('text="Sign-in options"')
-                            if await signin_options_text.count() > 0:
-                                log("[INFO] ⚠️ Detectada pantalla 'Sign-in options'. Clic en botón 'Back'...")
-                                btn_back = f.locator('#idBtn_Back, button:has-text("Back"), input[value="Back"]').first
-                                if await btn_back.count() > 0:
-                                    await btn_back.click(force=True)
+                            # 1. Clic directo en la flecha 'atrás' (←) o idBtn_Back cuando está la frase de la captura
+                            pk_text = f.locator('text="Your device will open a security window", text="Face, fingerprint, PIN or security key"')
+                            if await pk_text.count() > 0:
+                                log("[INFO] ⚠️ Detectada pantalla de Passkey. Clic en la flecha atrás (←)...")
+                                # Buscamos la flecha atrás de la cabecera del correo o botón idBtn_Back
+                                btn_arrow = f.locator('#idBtn_Back, button[aria-label*="back"], button[aria-label*="atrás"], .backButton, #idA_PWD_SwitchToPassword, button').first
+                                if await btn_arrow.count() > 0:
+                                    await btn_arrow.click(force=True)
                                 else:
-                                    await f.evaluate('() => { (document.querySelector("#idBtn_Back") || document.querySelector("input[value=\'Back\']") || document.querySelector("button")).click(); }')
+                                    await f.evaluate('() => { (document.querySelector("#idBtn_Back") || document.querySelector(".backButton") || document.querySelector("button")).click(); }')
                                 bypass_done = True
                                 await asyncio.sleep(3)
                                 break
 
-                            cancel_btn = f.locator('button:has-text("Cancel"), #cancelLink, input[value="Cancel"]').first
-                            if await cancel_btn.count() > 0 and await cancel_btn.is_visible():
-                                log("[INFO] ⚠️ Clic en 'Cancel' para salir de Passkey...")
-                                await cancel_btn.click(force=True)
+                            # 2. Clic en 'Sign-in options' Back si cayó ahí
+                            signin_opt = f.locator('text="Sign-in options"')
+                            if await signin_opt.count() > 0:
+                                log("[INFO] ⚠️ Clic en botón 'Back' de Sign-in options...")
+                                btn_b = f.locator('#idBtn_Back, button:has-text("Back"), input[value="Back"]').first
+                                await btn_b.click(force=True)
                                 bypass_done = True
                                 await asyncio.sleep(3)
                                 break
@@ -274,12 +281,12 @@ async def run():
                     break
                 await asyncio.sleep(1)
 
-            # PASO 3: Re-ingreso de correo tras salir del flujo Passkey
-            log("[INFO] Verificando si se requiere re-ingresar correo...")
+            # PASO 3: Re-ingresar correo tras salir de Passkey
+            log("[INFO] Verificando si requiere re-ingresar correo...")
             try:
                 selector_email_clean = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
                 email_clean, frame_clean = await obtener_locator_login(context, selector_email_clean, timeout=6000)
-                log("[INFO] ✅ Re-ingresando correo en la pantalla limpia...")
+                log("[INFO] ✅ Re-ingresando correo en la pantalla de inicio de sesión...")
                 await email_clean.fill(USUARIO)
                 await asyncio.sleep(1)
                 
