@@ -243,6 +243,86 @@ async def run():
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
 
+        # 1. Primero entramos a la raíz del portal para validar tokens
+        log("[INFO] Navegando a la raíz del portal Croamis...")
+        try:
+            await page.goto("https://croamis.latamcargo.com/croamis/", wait_until="commit", timeout=30000)
+            await asyncio.sleep(3)
+        except Exception as e:
+            log(f"⚠️ Aviso en navegación inicial: {e}")
+
+        # 2. Ahora sí navegamos al reporte específico
+        log("[INFO] Navegando directamente al reporte de Croamis...")
+        await page.goto(URL_REPORT, wait_until="commit", timeout=60000)
+        await asyncio.sleep(4)
+
+        # Verificación de acceso
+        autenticado = False
+        try:
+            await page.wait_for_selector('input[title*="Flight Period"], input[name*="date"]', timeout=15000)
+            log("🎉 Acceso directo exitoso al reporte de Croamis.")
+            autenticado = True
+        except Exception:
+            log("⚠️ La sesión cargada no abrió directamente el reporte.")
+
+        if not autenticado:
+            await realizar_login_fallback(context, page)
+            active_page = context.pages[-1] if context.pages else page
+            await active_page.goto(URL_REPORT, wait_until="commit", timeout=60000)
+            page = active_page
+
+        await page.wait_for_selector('input[title*="Flight Period"], input[name*="date"]', timeout=30000)
+        await guardar_captura_final(context, page, "Portal Cargado")
+
+        # ---------------------------------------------------------
+        # BLOQUE 1: Archivo General Consolidado -> Carpeta 'barrido hdc'
+        # ---------------------------------------------------------
+        log(f"\n📂 [1/4] Descargando Archivo General Consolidado para fecha {fecha_manana_str}...")
+        nombre_general = f"Barrido_HDC_General_{fecha_manana_str}.xlsx"
+        ruta_general = os.path.join(dir_barrido_hdc, nombre_general)
+
+        await descargar_reporte(page, fecha_manana_str, None, ruta_general)
+        log(f"   ✅ Guardado en 'barrido hdc': {nombre_general}")
+        subir_a_google_drive(ruta_general, nombre_general)
+        await asyncio.sleep(2)
+
+        # ---------------------------------------------------------
+        # BLOQUE 2: Archivos Específicos (GRU, LIM, SCL) -> Carpeta 'depurador barrido'
+        # ---------------------------------------------------------
+        log(f"\n📂 [2/4] Descargando reportes para 'depurador barrido' (GRU, LIM, SCL)...")
+        for i, posta in enumerate(POSTAS_DEPURADOR, 2):
+            log(f" [{i}/4] 🔄 Descargando reporte específico: {posta}...")
+            nombre_depurador = f"Depurador_{posta}_{fecha_manana_str}.xlsx"
+            ruta_depurador = os.path.join(dir_depurador, nombre_depurador)
+
+            await descargar_reporte(page, fecha_manana_str, posta, ruta_depurador)
+            log(f"   ✅ Guardado en 'depurador barrido': {nombre_depurador}")
+            await asyncio.sleep(2)
+
+        log(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente.")
+        await browser.close()
+            
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled"
+            ]
+        )
+        
+        context_kwargs = {
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "accept_downloads": True,
+            "viewport": {"width": 1280, "height": 720}
+        }
+        if storage_state_obj:
+            context_kwargs["storage_state"] = storage_state_obj
+
+        context = await browser.new_context(**context_kwargs)
+        page = await context.new_page()
+
         log("[INFO] Navegando al reporte de Croamis...")
         await page.goto(URL_REPORT, wait_until="commit", timeout=60000)
         await asyncio.sleep(4)
