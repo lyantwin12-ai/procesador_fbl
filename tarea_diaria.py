@@ -104,10 +104,11 @@ def subir_a_google_drive(ruta_local, nombre_archivo):
         log(f"   ❌ Error subiendo a Google Drive: {e}")
 
 async def obtener_locator_login(context, selector, timeout=45000):
-    """Busca un selector dinámico a través de todas las páginas y frames activos."""
+    """Busca un selector dinámico a través de todas las páginas abiertas y frames activos."""
     start_time = asyncio.get_event_loop().time()
     while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
-        for p in context.pages:
+        # Recorrer siempre desde la última página abierta hasta la primera
+        for p in reversed(context.pages):
             try:
                 loc = p.locator(selector).first
                 if await loc.count() > 0:
@@ -158,9 +159,7 @@ async def run():
 
         await asyncio.sleep(4)
 
-        # Clic forzado directo en "LOGIN WITH SSO"
         log("[INFO] Buscando y forzando clic en botón 'LOGIN WITH SSO'...")
-        sso_clicked = False
         selectors_sso = [
             'xpath=//*[contains(text(), "LOGIN WITH SSO")]',
             'xpath=//button[contains(., "SSO")]',
@@ -169,14 +168,16 @@ async def run():
             'text="LOGIN WITH SSO"'
         ]
 
+        # Forzar clic capturando si abre una nueva pestaña
         for _ in range(8):
+            sso_clicked = False
             for p_active in context.pages:
                 for f in [p_active] + p_active.frames:
                     for sel in selectors_sso:
                         try:
                             loc_sso = f.locator(sel).first
                             if await loc_sso.count() > 0:
-                                log(f"[INFO] ✅ Botón SSO localizado con selector '{sel}'. Forzando clic...")
+                                log(f"[INFO] ✅ Botón SSO localizado con '{sel}'. Forzando clic...")
                                 await loc_sso.click(force=True)
                                 sso_clicked = True
                                 break
@@ -190,15 +191,15 @@ async def run():
                 break
             await asyncio.sleep(1)
 
-        log("[INFO] Esperando 6s la redirección a Microsoft SSO...")
-        await asyncio.sleep(6)
+        log("[INFO] Esperando redirección y sincronización de ventanas...")
+        await asyncio.sleep(5)
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
             # 1. EMAIL
             selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
             email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=30000)
-            log("[INFO] Campo de correo localizado. Rellenando...")
+            log(f"[INFO] Campo de correo localizado en {frame_email}. Rellenando...")
             await email_input.fill(USUARIO)
             await asyncio.sleep(1)
 
@@ -208,8 +209,7 @@ async def run():
             log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(4)
 
-            # FORZAR CAMBIO A CONTRASEÑA O OTRAS FORMAS DE INICIAR SESIÓN
-            log("[INFO] Verificando presencia de opciones de inicio de sesión / bypass Passkey...")
+            # BYPASS PASSKEY / CAMBIO A CONTRASEÑA
             selectors_switch = [
                 '#idA_PWD_SwitchToPassword',
                 '#signInAnotherWay',
@@ -220,15 +220,15 @@ async def run():
                 '#cancelLink'
             ]
 
-            for _ in range(5):
+            for _ in range(4):
                 switched = False
-                for p_active in context.pages:
+                for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         for s_sel in selectors_switch:
                             try:
                                 btn_switch = f.locator(s_sel).first
                                 if await btn_switch.count() > 0 and await btn_switch.is_visible():
-                                    log(f"[INFO] ✅ Botón de cambio detectado ('{s_sel}'). Hiciendo clic para forzar contraseña...")
+                                    log(f"[INFO] ✅ Clic en bypass Passkey ('{s_sel}')...")
                                     await btn_switch.click(force=True)
                                     switched = True
                                     await asyncio.sleep(2)
@@ -241,22 +241,11 @@ async def run():
                         break
                 await asyncio.sleep(1)
 
-            # Si hizo clic en "Otras formas de iniciar sesión", hacer clic en "Password"
-            for p_active in context.pages:
-                for f in [p_active] + p_active.frames:
-                    try:
-                        opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Contraseña"), div:has-text("Password")').first
-                        if await opt_pwd.count() > 0 and await opt_pwd.is_visible():
-                            log("[INFO] Seleccionando método 'Contraseña' de la lista...")
-                            await opt_pwd.click(force=True)
-                            await asyncio.sleep(2)
-                    except Exception:
-                        pass
-
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
+            log("[INFO] Campo de contraseña localizado. Rellenando...")
             
             await pass_input.focus()
             await pass_input.fill(PASSWORD, force=True)
