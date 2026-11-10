@@ -49,6 +49,7 @@ POSTAS = [
     "PTY", "SDQ", "GEO", "SJO", "GUA"
 ]
 
+URL_LOGIN = "https://croamis.latamcargo.com/croamis/"
 URL_REPORT = "https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH"
 
 def subir_a_google_drive(ruta_local, nombre_archivo):
@@ -106,7 +107,6 @@ async def run():
                 "--disable-blink-features=AutomationControlled"
             ]
         )
-        # Contexto configurado con User-Agent estándar para evitar el bypass FIDO
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             accept_downloads=True,
@@ -115,8 +115,18 @@ async def run():
         page = await context.new_page()
 
         print("[INFO] 1. Navegando al portal Croamis...")
-        await page.goto(URL_REPORT, wait_until="load", timeout=60000)
+        await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(3000)
+
+        # Buscar si requiere clic en botón de inicio SSO
+        try:
+            btn_login = page.locator('button:has-text("Login"), a:has-text("Login"), input[type="submit"]').first
+            if await btn_login.is_visible(timeout=5000):
+                print("[INFO] Haciendo clic en inicio de sesión del portal...")
+                await btn_login.click()
+                await page.wait_for_timeout(3000)
+        except Exception:
+            pass
 
         print("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
@@ -129,14 +139,12 @@ async def run():
             btn_next = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
 
-            await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(3000)
 
-            # Si Microsoft muestra la opción de cambiar a contraseña en lugar de FIDO
+            # Si Microsoft ofrece opción de contraseña directa
             try:
-                btn_use_pass = page.locator('a[id="idA_PWD_SwitchToPassword"], a:has-text("Use your password instead"), a:has-text("Usar la contraseña en su lugar")').first
+                btn_use_pass = page.locator('a[id="idA_PWD_SwitchToPassword"]').first
                 if await btn_use_pass.is_visible(timeout=3000):
-                    print("[INFO] Saltando FIDO: Haciendo clic en 'Usar contraseña en su lugar'...")
                     await btn_use_pass.click()
                     await page.wait_for_timeout(2000)
             except Exception:
@@ -152,8 +160,7 @@ async def run():
             btn_pass_submit = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_pass_submit.click()
 
-            await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(3000)
 
             # 3. TOKEN 2FA
             print("[INFO] 2. Ingresando token 2FA...")
@@ -175,11 +182,12 @@ async def run():
                 pass
 
         except Exception as e:
-            print(f"❌ Error en el proceso de inicio de sesión: {e}")
+            print(f"❌ Error en autenticación: {e}")
             await page.screenshot(path="error_login.png")
             raise e
 
-        print("[INFO] 3. Esperando la carga de Flight Schedule Report (SCH012)...")
+        print("[INFO] Redirigiendo al reporte SCH012...")
+        await page.goto(URL_REPORT, wait_until="load", timeout=60000)
         await page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
 
         # Bucle de descarga por Posta
