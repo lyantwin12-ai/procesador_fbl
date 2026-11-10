@@ -156,35 +156,42 @@ async def run():
         except Exception as e:
             log(f"[INFO] Estado navegación inicial: {e}")
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(4)
 
-        # Clic robusto en "LOGIN WITH SSO"
-        log("[INFO] Buscando botón 'LOGIN WITH SSO'...")
+        # Clic forzado directo en "LOGIN WITH SSO"
+        log("[INFO] Buscando y forzando clic en botón 'LOGIN WITH SSO'...")
         sso_clicked = False
-        for _ in range(10):
+        selectors_sso = [
+            'xpath=//*[contains(text(), "LOGIN WITH SSO")]',
+            'xpath=//button[contains(., "SSO")]',
+            'xpath=//a[contains(., "SSO")]',
+            'xpath=//input[contains(@value, "SSO")]',
+            'text="LOGIN WITH SSO"'
+        ]
+
+        for _ in range(8):
             for p_active in context.pages:
                 for f in [p_active] + p_active.frames:
-                    try:
-                        # Buscar cualquier elemento que contenga la palabra SSO o LOGIN WITH SSO
-                        btn_sso = f.locator('button, a, div, input, span').filter(has_text="SSO").first
-                        if await btn_sso.is_visible():
-                            log("[INFO] ✅ Botón 'LOGIN WITH SSO' localizado. Ejecutando clic...")
-                            await btn_sso.click(force=True)
-                            sso_clicked = True
-                            break
-                    except Exception:
-                        pass
+                    for sel in selectors_sso:
+                        try:
+                            loc_sso = f.locator(sel).first
+                            if await loc_sso.count() > 0:
+                                log(f"[INFO] ✅ Botón SSO localizado con selector '{sel}'. Forzando clic...")
+                                await loc_sso.click(force=True)
+                                sso_clicked = True
+                                break
+                        except Exception:
+                            pass
+                    if sso_clicked:
+                        break
                 if sso_clicked:
                     break
             if sso_clicked:
                 break
             await asyncio.sleep(1)
 
-        if not sso_clicked:
-            log("[INFO] Advertencia: No se detectó botón SSO visible, continuando flujo...")
-
-        log("[INFO] Procesando redirección a Microsoft SSO...")
-        await asyncio.sleep(5)
+        log("[INFO] Esperando 6s la redirección a Microsoft SSO...")
+        await asyncio.sleep(6)
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
