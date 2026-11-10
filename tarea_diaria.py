@@ -65,10 +65,14 @@ POSTAS = [
 
 URL_REPORT = "https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH"
 
+def log(mensaje):
+    """Imprime mensajes de log forzando el volcado inmediato al buffer de Render."""
+    print(mensaje, flush=True)
+
 def subir_a_google_drive(ruta_local, nombre_archivo):
     """Suba un archivo local a la carpeta especificada en Google Drive."""
     if not GOOGLE_JSON_STR:
-        print("⚠️ [ADVERTENCIA] No se configuró GOOGLE_CREDENTIALS_JSON. Omitiendo subida.")
+        log("⚠️ [ADVERTENCIA] No se configuró GOOGLE_CREDENTIALS_JSON. Omitiendo subida.")
         return
 
     try:
@@ -95,9 +99,9 @@ def subir_a_google_drive(ruta_local, nombre_archivo):
             fields='id'
         ).execute()
 
-        print(f"   ☁️ Subido con éxito a Google Drive (ID: {archivo_subido.get('id')})")
+        log(f"   ☁️ Subido con éxito a Google Drive (ID: {archivo_subido.get('id')})")
     except Exception as e:
-        print(f"   ❌ Error subiendo a Google Drive: {e}")
+        log(f"   ❌ Error subiendo a Google Drive: {e}")
 
 async def obtener_locator_login(context, selector, timeout=45000):
     """Busca un selector dinámico a través de todas las páginas y frames activos."""
@@ -118,7 +122,7 @@ async def obtener_locator_login(context, selector, timeout=45000):
     raise TimeoutError(f"No se encontró el selector '{selector}' en ningún frame ni página activa.")
 
 async def run():
-    print("[INFO] Iniciando ejecucion del script tarea_diaria.py...")
+    log("[INFO] Iniciando ejecución de tarea_diaria.py...")
     if not TOTP_SECRET or not USUARIO or not PASSWORD:
         raise ValueError("Error: Faltan variables de entorno requeridas en Render.")
 
@@ -128,7 +132,7 @@ async def run():
     totp = pyotp.TOTP(TOTP_SECRET)
     token_2fa = totp.now()
     fecha_hoy = datetime.now().strftime("%d-%b-%Y").upper()
-    print(f"[INFO] Código 2FA generado exitosamente: {token_2fa[:2]}***")
+    log(f"[INFO] Código 2FA generado exitosamente: {token_2fa[:2]}***")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -146,11 +150,11 @@ async def run():
         )
         page = await context.new_page()
 
-        print("[INFO] 1. Navegando al portal Croamis...")
+        log("[INFO] 1. Navegando al portal Croamis...")
         try:
             await page.goto(URL_REPORT, wait_until="commit", timeout=45000)
         except Exception as e:
-            print(f"[INFO] Advertencia en goto inicial: {e}")
+            log(f"[INFO] Estado navegación inicial: {e}")
 
         await asyncio.sleep(4)
 
@@ -158,25 +162,25 @@ async def run():
         try:
             sso_btn = page.locator('button:has-text("Login"), a:has-text("Login"), input[value*="Login"]').first
             if await sso_btn.is_visible(timeout=4000):
-                print("[INFO] Clic en botón de ingreso corporativo...")
+                log("[INFO] Clic en botón de ingreso corporativo...")
                 await sso_btn.click()
                 await asyncio.sleep(3)
         except Exception:
             pass
 
-        print("[INFO] Buscando formulario de autenticación Microsoft...")
+        log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
             # 1. EMAIL
             selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
             email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=30000)
-            print("[INFO] Campo de correo localizado. Rellenando...")
+            log("[INFO] Campo de correo localizado. Rellenando...")
             await email_input.fill(USUARIO)
             await asyncio.sleep(1)
 
             btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
             
-            print("[INFO] Procesando redirección post-correo...")
+            log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(5)
 
             # BYPASS FIDO/PASSKEY
@@ -186,7 +190,7 @@ async def run():
                         try:
                             btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password"), #cancelLink').first
                             if await btn_switch.is_visible():
-                                print("[INFO] Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
+                                log("[INFO] Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
                                 await btn_switch.click()
                                 await asyncio.sleep(3)
                                 break
@@ -195,7 +199,7 @@ async def run():
                 await asyncio.sleep(1)
 
             # 2. CONTRASEÑA
-            print("[INFO] Ingresando contraseña...")
+            log("[INFO] Ingresando contraseña...")
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             await pass_input.fill(PASSWORD, force=True)
@@ -206,7 +210,7 @@ async def run():
             await asyncio.sleep(4)
 
             # 3. TOKEN 2FA
-            print("[INFO] 2. Ingresando token 2FA...")
+            log("[INFO] 2. Ingresando token 2FA...")
             selector_otp = 'input[name="otpcodes"], input[name="otc"]'
             otp_input, frame_otp = await obtener_locator_login(context, selector_otp, timeout=30000)
             await otp_input.fill(token_2fa, force=True)
@@ -225,12 +229,12 @@ async def run():
                 pass
 
         except Exception as e:
-            print(f"❌ Error en autenticación: {e}")
+            log(f"❌ Error en autenticación: {e}")
             active_p = context.pages[-1] if context.pages else page
             await active_p.screenshot(path="error_login.png")
             raise e
 
-        print("[INFO] 3. Esperando la carga de Flight Schedule Report (SCH012)...")
+        log("[INFO] 3. Esperando la carga de Flight Schedule Report (SCH012)...")
         report_page = context.pages[-1] if context.pages else page
         try:
             await report_page.goto(URL_REPORT, wait_until="commit", timeout=60000)
@@ -241,7 +245,7 @@ async def run():
 
         # Bucle de descarga por Posta
         for i, posta in enumerate(POSTAS, 1):
-            print(f"[{i}/{len(POSTAS)}] 🔄 Procesando posta: {posta}...")
+            log(f"[{i}/{len(POSTAS)}] 🔄 Procesando posta: {posta}...")
 
             inputs_fecha = report_page.locator('input[title*="Flight Period"], input[name*="date"], input[type="text"]')
             await inputs_fecha.nth(0).fill(fecha_hoy)
@@ -263,12 +267,12 @@ async def run():
             nombre_archivo = f"Barrido_HDC_{posta}_{fecha_hoy}.xlsx"
             ruta_guardado = os.path.join(carpeta_destino, nombre_archivo)
             await download.save_as(ruta_guardado)
-            print(f"   ✅ Descargado localmente: {nombre_archivo}")
+            log(f"   ✅ Descargado localmente: {nombre_archivo}")
 
             subir_a_google_drive(ruta_guardado, nombre_archivo)
             await asyncio.sleep(1.5)
 
-        print(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente para las 28 postas.")
+        log(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente para las 28 postas.")
         await browser.close()
 
 if __name__ == "__main__":
