@@ -206,18 +206,19 @@ async def run():
             await btn_next.click()
             
             log("[INFO] Procesando redirección post-correo...")
-            await asyncio.sleep(5)
+            await asyncio.sleep(4)
 
-            # BYPASS FIDO/PASSKEY SI ES NECESARIO
-            for _ in range(5):
+            # BYPASS FIDO/PASSKEY (Paso preventivo directo antes de buscar contraseña)
+            log("[INFO] Verificando presencia de bypass FIDO/Passkey...")
+            for _ in range(4):
                 for p_active in context.pages:
                     for f in [p_active] + p_active.frames:
                         try:
                             btn_switch = f.locator('#idA_PWD_SwitchToPassword, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña"), a:has-text("Password"), #cancelLink').first
-                            if await btn_switch.is_visible():
-                                log("[INFO] Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
-                                await btn_switch.click()
-                                await asyncio.sleep(3)
+                            if await btn_switch.count() > 0:
+                                log("[INFO] ✅ Haciendo clic en 'Usar contraseña en su lugar' / 'Cancelar FIDO'...")
+                                await btn_switch.click(force=True)
+                                await asyncio.sleep(2)
                                 break
                         except Exception:
                             pass
@@ -226,8 +227,12 @@ async def run():
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
             selector_pass = 'input[name="passwd"], input[type="password"]'
-            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
+            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=30000)
+            
+            # Forzar foco y escribir la contraseña vía teclado de Playwright
+            await pass_input.focus()
             await pass_input.fill(PASSWORD, force=True)
+            log("[INFO] Contraseña ingresada. Enviando formulario...")
             await asyncio.sleep(1)
 
             btn_pass_submit = frame_pass.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
@@ -248,8 +253,8 @@ async def run():
             try:
                 await asyncio.sleep(3)
                 btn_stay = frame_otp.locator('#idSIButton9, input[value="Yes"]').first
-                if await btn_stay.is_visible(timeout=5000):
-                    await btn_stay.click()
+                if await btn_stay.count() > 0:
+                    await btn_stay.click(force=True)
             except Exception:
                 pass
 
