@@ -107,7 +107,6 @@ async def obtener_locator_login(context, selector, timeout=45000):
     """Busca un selector dinámico a través de todas las páginas abiertas y frames activos."""
     start_time = asyncio.get_event_loop().time()
     while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
-        # Recorrer siempre desde la última página abierta hasta la primera
         for p in reversed(context.pages):
             try:
                 loc = p.locator(selector).first
@@ -168,7 +167,6 @@ async def run():
             'text="LOGIN WITH SSO"'
         ]
 
-        # Forzar clic capturando si abre una nueva pestaña
         for _ in range(8):
             sso_clicked = False
             for p_active in context.pages:
@@ -199,7 +197,7 @@ async def run():
             # 1. EMAIL
             selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
             email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=30000)
-            log(f"[INFO] Campo de correo localizado en {frame_email}. Rellenando...")
+            log("[INFO] Campo de correo localizado. Rellenando...")
             await email_input.fill(USUARIO)
             await asyncio.sleep(1)
 
@@ -209,44 +207,59 @@ async def run():
             log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(4)
 
-            # BYPASS PASSKEY / CAMBIO A CONTRASEÑA
-            selectors_switch = [
-                '#idA_PWD_SwitchToPassword',
-                '#signInAnotherWay',
-                'a:has-text("Use your password instead")',
-                'a:has-text("Usar tu contraseña")',
-                'a:has-text("Otras formas de iniciar sesión")',
-                'a:has-text("Other ways to sign in")',
-                '#cancelLink'
-            ]
-
-            for _ in range(4):
-                switched = False
+            # 🛠️ BYPASS ESPECÍFICO PARA LA PANTALLA 'Face, fingerprint, PIN or security key'
+            log("[INFO] Verificando si Microsoft solicita Passkey / PIN...")
+            for _ in range(5):
+                bypass_done = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
-                        for s_sel in selectors_switch:
-                            try:
-                                btn_switch = f.locator(s_sel).first
-                                if await btn_switch.count() > 0 and await btn_switch.is_visible():
-                                    log(f"[INFO] ✅ Clic en bypass Passkey ('{s_sel}')...")
-                                    await btn_switch.click(force=True)
-                                    switched = True
-                                    await asyncio.sleep(2)
-                                    break
-                            except Exception:
-                                pass
-                        if switched:
-                            break
-                    if switched:
+                        try:
+                            # 1. Chequear si la pantalla actual es la de Passkey / PIN
+                            passkey_text = f.locator('text="Face, fingerprint, PIN or security key"')
+                            if await passkey_text.count() > 0:
+                                log("[INFO] ⚠️ Detectada pantalla de Passkey/PIN. Clic en flecha atrás (←) para cambiar a contraseña...")
+                                # Clic en la flecha atrás cerca del correo o botón idBtn_Back
+                                back_btn = f.locator('#idBtn_Back, button[aria-label*="Back"], button[aria-label*="atrás"], .backButton, #idA_PWD_SwitchToPassword').first
+                                if await back_btn.count() > 0:
+                                    await back_btn.click(force=True)
+                                else:
+                                    # Clic directo por JavaScript sobre la flecha del header
+                                    await f.evaluate('() => { (document.querySelector("#idBtn_Back") || document.querySelector(".backButton") || document.querySelector("button")).click(); }')
+                                bypass_done = True
+                                await asyncio.sleep(3)
+                                break
+
+                            # 2. Chequear otros enlaces directos de cambio a contraseña
+                            btn_switch = f.locator('#idA_PWD_SwitchToPassword, #signInAnotherWay, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña")').first
+                            if await btn_switch.count() > 0 and await btn_switch.is_visible():
+                                log("[INFO] ✅ Botón directo a contraseña detectado. Haciendo clic...")
+                                await btn_switch.click(force=True)
+                                bypass_done = True
+                                await asyncio.sleep(3)
+                                break
+                        except Exception:
+                            pass
+                    if bypass_done:
                         break
+                if bypass_done:
+                    await asyncio.sleep(2)
+                    break
                 await asyncio.sleep(1)
+
+            # Si muestra la lista de opciones de inicio de sesión, seleccionar "Password"
+            for p_active in reversed(context.pages):
+                for f in [p_active] + p_active.frames:
+                    try:
+                        opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Password"), div:has-text("Contraseña")').first
+                        if await opt_pwd.count() > 0 and await opt_pwd.is_visible():
+                            log("[INFO] Seleccionando opción 'Password' de la lista...")
+                            await opt_pwd.click(force=True)
+                            await asyncio.sleep(2)
+                    except Exception:
+                        pass
 
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
-            # 📸 Captura de pantalla preventiva instantánea:
-            await context.pages[-1].screenshot(path="error_login.png")
-            selector_pass = 'input[name="passwd"], input[type="password"]'
-            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             log("[INFO] Campo de contraseña localizado. Rellenando...")
