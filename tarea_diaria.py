@@ -11,10 +11,24 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ---------------------------------------------------------
-# 0. Servidor dummy para mantener vivo el Web Service en Render
+# 0. Servidor HTTP de salud y visor de capturas de error
 # ---------------------------------------------------------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/error.png":
+            if os.path.exists("error_login.png"):
+                self.send_response(200)
+                self.send_header("Content-type", "image/png")
+                self.end_headers()
+                with open("error_login.png", "rb") as f:
+                    self.wfile.write(f.read())
+                return
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"No hay capturas de error guardadas.")
+                return
+
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK - Croamis Bot Running")
@@ -118,7 +132,6 @@ async def run():
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(3000)
 
-        # Manejar redirección a nueva pestaña o iframe tras clic en Login
         target_page = page
         try:
             btn_login = page.locator('button:has-text("Login"), a:has-text("Login"), input[type="submit"]').first
@@ -128,9 +141,8 @@ async def run():
                     await btn_login.click()
                 target_page = await new_page_info.value
                 await target_page.wait_for_load_state("domcontentloaded")
-                print("[INFO] Redirigido a la nueva ventana de autenticación.")
+                print("[INFO] Redirigido a la ventana de autenticación.")
         except Exception:
-            # Si no abre ventana emergente, continuamos con la misma página
             pass
 
         print("[INFO] Buscando formulario de autenticación Microsoft...")
@@ -143,10 +155,9 @@ async def run():
             
             btn_next = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
-
             await target_page.wait_for_timeout(3000)
 
-            # Si Microsoft ofrece opción de contraseña directa
+            # Switch a contraseña si entra en flujo FIDO/Passkey
             try:
                 btn_use_pass = target_page.locator('a[id="idA_PWD_SwitchToPassword"]').first
                 if await btn_use_pass.is_visible(timeout=3000):
@@ -164,7 +175,6 @@ async def run():
             
             btn_pass_submit = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_pass_submit.click()
-
             await target_page.wait_for_timeout(3000)
 
             # 3. TOKEN 2FA
@@ -177,7 +187,7 @@ async def run():
             btn_otp_submit = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_otp_submit.click()
 
-            # Confirmación de "Mantener la sesión iniciada"
+            # Confirmar "Mantener sesión"
             try:
                 await target_page.wait_for_timeout(3000)
                 btn_stay = target_page.locator('#idSIButton9, input[value="Yes"]').first
