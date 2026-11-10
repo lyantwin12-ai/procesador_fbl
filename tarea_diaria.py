@@ -11,7 +11,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ---------------------------------------------------------
-# 0. Servidor HTTP de salud y visor de capturas de error
+# 0. Servidor HTTP de salud y visor de capturas de pantalla
 # ---------------------------------------------------------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -19,6 +19,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             if os.path.exists("error_login.png"):
                 self.send_response(200)
                 self.send_header("Content-type", "image/png")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                 self.end_headers()
                 with open("error_login.png", "rb") as f:
                     self.wfile.write(f.read())
@@ -26,7 +27,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             else:
                 self.send_response(404)
                 self.end_headers()
-                self.wfile.write(b"No hay capturas de error guardadas aun.")
+                self.wfile.write(b"No hay capturas de pantalla guardadas aun.")
                 return
 
         self.send_response(200)
@@ -68,6 +69,16 @@ URL_REPORT = "https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH"
 def log(mensaje):
     """Imprime mensajes de log forzando el volcado inmediato al buffer de Render."""
     print(mensaje, flush=True)
+
+async def guardar_captura_final(context, fallback_page=None, etiqueta=""):
+    """Toma una captura de la ultima pagina activa y la guarda en error_login.png."""
+    try:
+        page_to_capture = context.pages[-1] if (context and context.pages) else fallback_page
+        if page_to_capture:
+            await page_to_capture.screenshot(path="error_login.png", full_page=True)
+            log(f"📸 [CAPTURA GUARDADA] Captura generada exitosamente ({etiqueta}). Disponible en /error.png")
+    except Exception as e:
+        log(f"⚠️ Error generando captura de pantalla: {e}")
 
 def subir_a_google_drive(ruta_local, nombre_archivo):
     """Suba un archivo local a la carpeta especificada en Google Drive."""
@@ -269,9 +280,8 @@ async def run():
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
             
-            # Guardamos la captura de pantalla activa de forma preventiva
-            active_p = context.pages[-1] if context.pages else page
-            await active_p.screenshot(path="error_login.png")
+            # 📸 Captura previa instantánea al llegar al punto de contraseña
+            await guardar_captura_final(context, page, "Paso Contraseña")
 
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
@@ -288,6 +298,10 @@ async def run():
 
             # 3. TOKEN 2FA
             log("[INFO] 2. Ingresando token 2FA...")
+            
+            # 📸 Captura previa instantánea al llegar al punto 2FA
+            await guardar_captura_final(context, page, "Paso 2FA")
+
             selector_otp = 'input[name="otpcodes"], input[name="otc"]'
             otp_input, frame_otp = await obtener_locator_login(context, selector_otp, timeout=30000)
             await otp_input.fill(token_2fa, force=True)
@@ -307,8 +321,7 @@ async def run():
 
         except Exception as e:
             log(f"❌ Error en autenticación: {e}")
-            active_p = context.pages[-1] if context.pages else page
-            await active_p.screenshot(path="error_login.png")
+            await guardar_captura_final(context, page, "Error Autenticación")
             raise e
 
         log("[INFO] 3. Esperando la carga de Flight Schedule Report (SCH012)...")
@@ -319,6 +332,9 @@ async def run():
             pass
 
         await report_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
+        
+        # 📸 Captura tras ingresar exitosamente a Croamis
+        await guardar_captura_final(context, report_page, "Portal Croamis Cargado")
 
         # Bucle de descarga por Posta
         for i, posta in enumerate(POSTAS, 1):
