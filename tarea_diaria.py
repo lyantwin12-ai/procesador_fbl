@@ -118,64 +118,69 @@ async def run():
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(3000)
 
-        # Buscar si requiere clic en botón de inicio SSO
+        # Manejar redirección a nueva pestaña o iframe tras clic en Login
+        target_page = page
         try:
             btn_login = page.locator('button:has-text("Login"), a:has-text("Login"), input[type="submit"]').first
             if await btn_login.is_visible(timeout=5000):
                 print("[INFO] Haciendo clic en inicio de sesión del portal...")
-                await btn_login.click()
-                await page.wait_for_timeout(3000)
+                async with context.expect_page(timeout=5000) as new_page_info:
+                    await btn_login.click()
+                target_page = await new_page_info.value
+                await target_page.wait_for_load_state("domcontentloaded")
+                print("[INFO] Redirigido a la nueva ventana de autenticación.")
         except Exception:
+            # Si no abre ventana emergente, continuamos con la misma página
             pass
 
         print("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
             # 1. EMAIL
-            email_input = page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]').first
+            email_input = target_page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]').first
             await email_input.wait_for(state="visible", timeout=30000)
             await email_input.fill(USUARIO)
-            await page.wait_for_timeout(1000)
+            await target_page.wait_for_timeout(1000)
             
-            btn_next = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            btn_next = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
 
-            await page.wait_for_timeout(3000)
+            await target_page.wait_for_timeout(3000)
 
             # Si Microsoft ofrece opción de contraseña directa
             try:
-                btn_use_pass = page.locator('a[id="idA_PWD_SwitchToPassword"]').first
+                btn_use_pass = target_page.locator('a[id="idA_PWD_SwitchToPassword"]').first
                 if await btn_use_pass.is_visible(timeout=3000):
                     await btn_use_pass.click()
-                    await page.wait_for_timeout(2000)
+                    await target_page.wait_for_timeout(2000)
             except Exception:
                 pass
 
             # 2. CONTRASEÑA
             print("[INFO] Ingresando contraseña...")
-            pass_input = page.locator('input[name="passwd"], input[type="password"]').first
+            pass_input = target_page.locator('input[name="passwd"], input[type="password"]').first
             await pass_input.wait_for(state="visible", timeout=30000)
             await pass_input.fill(PASSWORD)
-            await page.wait_for_timeout(1000)
+            await target_page.wait_for_timeout(1000)
             
-            btn_pass_submit = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            btn_pass_submit = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_pass_submit.click()
 
-            await page.wait_for_timeout(3000)
+            await target_page.wait_for_timeout(3000)
 
             # 3. TOKEN 2FA
             print("[INFO] 2. Ingresando token 2FA...")
-            otp_input = page.locator('input[name="otpcodes"], input[name="otc"]').first
+            otp_input = target_page.locator('input[name="otpcodes"], input[name="otc"]').first
             await otp_input.wait_for(state="visible", timeout=30000)
             await otp_input.fill(token_2fa)
-            await page.wait_for_timeout(1000)
+            await target_page.wait_for_timeout(1000)
             
-            btn_otp_submit = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            btn_otp_submit = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_otp_submit.click()
 
             # Confirmación de "Mantener la sesión iniciada"
             try:
-                await page.wait_for_timeout(3000)
-                btn_stay = page.locator('#idSIButton9, input[value="Yes"]').first
+                await target_page.wait_for_timeout(3000)
+                btn_stay = target_page.locator('#idSIButton9, input[value="Yes"]').first
                 if await btn_stay.is_visible(timeout=5000):
                     await btn_stay.click()
             except Exception:
@@ -183,30 +188,30 @@ async def run():
 
         except Exception as e:
             print(f"❌ Error en autenticación: {e}")
-            await page.screenshot(path="error_login.png")
+            await target_page.screenshot(path="error_login.png")
             raise e
 
         print("[INFO] Redirigiendo al reporte SCH012...")
-        await page.goto(URL_REPORT, wait_until="load", timeout=60000)
-        await page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
+        await target_page.goto(URL_REPORT, wait_until="load", timeout=60000)
+        await target_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
 
         # Bucle de descarga por Posta
         for i, posta in enumerate(POSTAS, 1):
             print(f"[{i}/{len(POSTAS)}] 🔄 Procesando posta: {posta}...")
 
-            inputs_fecha = page.locator('input[title*="Flight Period"], input[name*="date"], input[type="text"]')
+            inputs_fecha = target_page.locator('input[title*="Flight Period"], input[name*="date"], input[type="text"]')
             await inputs_fecha.nth(0).fill(fecha_hoy)
             await inputs_fecha.nth(1).fill(fecha_hoy)
 
-            input_brd_pt = page.locator('xpath=//td[contains(., "Brd Pt")]/following-sibling::td//input | input[name*="brdPt"]').first
+            input_brd_pt = target_page.locator('xpath=//td[contains(., "Brd Pt")]/following-sibling::td//input | input[name*="brdPt"]').first
             await input_brd_pt.clear()
             await input_brd_pt.fill(posta)
 
-            async with page.expect_download() as download_info:
-                flecha_desplegable = page.locator('xpath=//button[contains(@class, "ui-splitbutton")]//span | div:has-text("Generate") button | .ui-menu-button').first
+            async with target_page.expect_download() as download_info:
+                flecha_desplegable = target_page.locator('xpath=//button[contains(@class, "ui-splitbutton")]//span | div:has-text("Generate") button | .ui-menu-button').first
                 await flecha_desplegable.click()
 
-                opcion_excel = page.locator('text="Generate As EXCEL"')
+                opcion_excel = target_page.locator('text="Generate As EXCEL"')
                 await opcion_excel.click()
 
             download = await download_info.value
@@ -217,7 +222,7 @@ async def run():
             print(f"   ✅ Descargado localmente: {nombre_archivo}")
 
             subir_a_google_drive(ruta_guardado, nombre_archivo)
-            await page.wait_for_timeout(1500)
+            await target_page.wait_for_timeout(1500)
 
         print(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente para las 28 postas.")
         await browser.close()
