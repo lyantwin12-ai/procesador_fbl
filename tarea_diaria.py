@@ -26,7 +26,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             else:
                 self.send_response(404)
                 self.end_headers()
-                self.wfile.write(b"No hay capturas de error guardadas.")
+                self.wfile.write(b"No hay capturas de error guardadas aun.")
                 return
 
         self.send_response(200)
@@ -207,29 +207,27 @@ async def run():
             log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(4)
 
-            # 🛠️ BYPASS ESPECÍFICO PARA LA PANTALLA 'Face, fingerprint, PIN or security key'
+            # BYPASS PANTALLA PASSKEY / PIN Y NAVEGACIÓN A OPCIONES DE LOGIN
             log("[INFO] Verificando si Microsoft solicita Passkey / PIN...")
             for _ in range(5):
                 bypass_done = False
                 for p_active in reversed(context.pages):
                     for f in [p_active] + p_active.frames:
                         try:
-                            # 1. Chequear si la pantalla actual es la de Passkey / PIN
+                            # 1. Clic en flecha atrás si está la pantalla de Passkey
                             passkey_text = f.locator('text="Face, fingerprint, PIN or security key"')
                             if await passkey_text.count() > 0:
-                                log("[INFO] ⚠️ Detectada pantalla de Passkey/PIN. Clic en flecha atrás (←) para cambiar a contraseña...")
-                                # Clic en la flecha atrás cerca del correo o botón idBtn_Back
+                                log("[INFO] ⚠️ Detectada pantalla de Passkey/PIN. Clic en flecha atrás (←)...")
                                 back_btn = f.locator('#idBtn_Back, button[aria-label*="Back"], button[aria-label*="atrás"], .backButton, #idA_PWD_SwitchToPassword').first
                                 if await back_btn.count() > 0:
                                     await back_btn.click(force=True)
                                 else:
-                                    # Clic directo por JavaScript sobre la flecha del header
                                     await f.evaluate('() => { (document.querySelector("#idBtn_Back") || document.querySelector(".backButton") || document.querySelector("button")).click(); }')
                                 bypass_done = True
                                 await asyncio.sleep(3)
                                 break
 
-                            # 2. Chequear otros enlaces directos de cambio a contraseña
+                            # 2. Clic directo a contraseña si existe enlace directo
                             btn_switch = f.locator('#idA_PWD_SwitchToPassword, #signInAnotherWay, a:has-text("Use your password instead"), a:has-text("Usar tu contraseña")').first
                             if await btn_switch.count() > 0 and await btn_switch.is_visible():
                                 log("[INFO] ✅ Botón directo a contraseña detectado. Haciendo clic...")
@@ -246,20 +244,35 @@ async def run():
                     break
                 await asyncio.sleep(1)
 
-            # Si muestra la lista de opciones de inicio de sesión, seleccionar "Password"
-            for p_active in reversed(context.pages):
-                for f in [p_active] + p_active.frames:
-                    try:
-                        opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Password"), div:has-text("Contraseña")').first
-                        if await opt_pwd.count() > 0 and await opt_pwd.is_visible():
-                            log("[INFO] Seleccionando opción 'Password' de la lista...")
-                            await opt_pwd.click(force=True)
-                            await asyncio.sleep(2)
-                    except Exception:
-                        pass
+            # Clic explícito en la opción "Password" de la lista de opciones
+            log("[INFO] Seleccionando método 'Password' de la lista...")
+            for _ in range(4):
+                pwd_option_clicked = False
+                for p_active in reversed(context.pages):
+                    for f in [p_active] + p_active.frames:
+                        try:
+                            opt_pwd = f.locator('div[data-test-id="Password"], div:has-text("Password"), div:has-text("Contraseña"), [id*="Password"]').first
+                            if await opt_pwd.count() > 0:
+                                await opt_pwd.click(force=True)
+                                pwd_option_clicked = True
+                                log("[INFO] ✅ Método 'Password' seleccionado con éxito.")
+                                await asyncio.sleep(2)
+                                break
+                        except Exception:
+                            pass
+                    if pwd_option_clicked:
+                        break
+                if pwd_option_clicked:
+                    break
+                await asyncio.sleep(1)
 
             # 2. CONTRASEÑA
             log("[INFO] Ingresando contraseña...")
+            
+            # Guardamos la captura de pantalla activa de forma preventiva
+            active_p = context.pages[-1] if context.pages else page
+            await active_p.screenshot(path="error_login.png")
+
             selector_pass = 'input[name="passwd"], input[type="password"]'
             pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=45000)
             log("[INFO] Campo de contraseña localizado. Rellenando...")
