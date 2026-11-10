@@ -63,7 +63,6 @@ POSTAS = [
     "PTY", "SDQ", "GEO", "SJO", "GUA"
 ]
 
-URL_LOGIN = "https://croamis.latamcargo.com/croamis/"
 URL_REPORT = "https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH"
 
 def subir_a_google_drive(ruta_local, nombre_archivo):
@@ -100,6 +99,25 @@ def subir_a_google_drive(ruta_local, nombre_archivo):
     except Exception as e:
         print(f"   ❌ Error subiendo a Google Drive: {e}")
 
+async def obtener_locator_login(page_or_context, selector, timeout=15000):
+    """Busca un selector en la página principal o dentro de cualquier iframe."""
+    start_time = asyncio.get_event_loop().time()
+    while (asyncio.get_event_loop().time() - start_time) < (timeout / 1000):
+        # 1. Probar en la lista de páginas abiertas
+        pages = page_or_context.pages if hasattr(page_or_context, "pages") else [page_or_context]
+        for p in pages:
+            # En la página principal
+            loc = p.locator(selector).first
+            if await loc.is_visible():
+                return loc, p
+            # En los frames
+            for frame in p.frames:
+                f_loc = frame.locator(selector).first
+                if await f_loc.is_visible():
+                    return f_loc, frame
+        await asyncio.sleep(0.5)
+    raise TimeoutError(f"No se encontró el selector '{selector}' en ningún frame ni página.")
+
 async def run():
     if not TOTP_SECRET or not USUARIO or not PASSWORD:
         raise ValueError("Error: Faltan variables de entorno requeridas en Render.")
@@ -129,68 +147,65 @@ async def run():
         page = await context.new_page()
 
         print("[INFO] 1. Navegando al portal Croamis...")
-        await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
+        await page.goto(URL_REPORT, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(3000)
 
-        target_page = page
+        # Si Croamis presenta una landing con botón explícito de login corporativo
         try:
-            btn_login = page.locator('button:has-text("Login"), a:has-text("Login"), input[type="submit"]').first
-            if await btn_login.is_visible(timeout=5000):
-                print("[INFO] Haciendo clic en inicio de sesión del portal...")
-                async with context.expect_page(timeout=5000) as new_page_info:
-                    await btn_login.click()
-                target_page = await new_page_info.value
-                await target_page.wait_for_load_state("domcontentloaded")
-                print("[INFO] Redirigido a la ventana de autenticación.")
+            sso_btn = page.locator('button:has-text("Login"), a:has-text("Login"), input[value*="Login"]').first
+            if await sso_btn.is_visible(timeout=4000):
+                print("[INFO] Clic en botón de ingreso corporativo...")
+                await sso_btn.click()
+                await page.wait_for_timeout(3000)
         except Exception:
             pass
 
         print("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
             # 1. EMAIL
-            email_input = target_page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]').first
-            await email_input.wait_for(state="visible", timeout=30000)
+            selector_email = 'input[type="email"], input[name="loginfmt"], input[id="i0116"]'
+            email_input, frame_email = await obtener_locator_login(context, selector_email, timeout=30000)
             await email_input.fill(USUARIO)
-            await target_page.wait_for_timeout(1000)
-            
-            btn_next = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
-            await btn_next.click()
-            await target_page.wait_for_timeout(3000)
+            await page.wait_for_timeout(1000)
 
-            # Switch a contraseña si entra en flujo FIDO/Passkey
+            btn_next = frame_email.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            await btn_next.click()
+            await page.wait_for_timeout(3000)
+
+            # Bypass FIDO/Passkey
             try:
-                btn_use_pass = target_page.locator('a[id="idA_PWD_SwitchToPassword"]').first
+                btn_use_pass = frame_email.locator('a[id="idA_PWD_SwitchToPassword"]').first
                 if await btn_use_pass.is_visible(timeout=3000):
                     await btn_use_pass.click()
-                    await target_page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(2000)
             except Exception:
                 pass
 
             # 2. CONTRASEÑA
             print("[INFO] Ingresando contraseña...")
-            pass_input = target_page.locator('input[name="passwd"], input[type="password"]').first
-            await pass_input.wait_for(state="visible", timeout=30000)
+            selector_pass = 'input[name="passwd"], input[type="password"]'
+            pass_input, frame_pass = await obtener_locator_login(context, selector_pass, timeout=30000)
             await pass_input.fill(PASSWORD)
-            await target_page.wait_for_timeout(1000)
-            
-            btn_pass_submit = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            await page.wait_for_timeout(1000)
+
+            btn_pass_submit = frame_pass.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_pass_submit.click()
-            await target_page.wait_for_timeout(3000)
+            await page.wait_for_timeout(3000)
 
             # 3. TOKEN 2FA
             print("[INFO] 2. Ingresando token 2FA...")
-            otp_input = target_page.locator('input[name="otpcodes"], input[name="otc"]').first
-            await otp_input.wait_for(state="visible", timeout=30000)
+            selector_otp = 'input[name="otpcodes"], input[name="otc"]'
+            otp_input, frame_otp = await obtener_locator_login(context, selector_otp, timeout=30000)
             await otp_input.fill(token_2fa)
-            await target_page.wait_for_timeout(1000)
-            
-            btn_otp_submit = target_page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
+            await page.wait_for_timeout(1000)
+
+            btn_otp_submit = frame_otp.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_otp_submit.click()
 
-            # Confirmar "Mantener sesión"
+            # Confirmación "Keep me signed in"
             try:
-                await target_page.wait_for_timeout(3000)
-                btn_stay = target_page.locator('#idSIButton9, input[value="Yes"]').first
+                await page.wait_for_timeout(3000)
+                btn_stay = frame_otp.locator('#idSIButton9, input[value="Yes"]').first
                 if await btn_stay.is_visible(timeout=5000):
                     await btn_stay.click()
             except Exception:
@@ -198,30 +213,33 @@ async def run():
 
         except Exception as e:
             print(f"❌ Error en autenticación: {e}")
-            await target_page.screenshot(path="error_login.png")
+            # Guardar captura de error en la página activa
+            active_p = context.pages[-1] if context.pages else page
+            await active_p.screenshot(path="error_login.png")
             raise e
 
-        print("[INFO] Redirigiendo al reporte SCH012...")
-        await target_page.goto(URL_REPORT, wait_until="load", timeout=60000)
-        await target_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
+        print("[INFO] 3. Esperando la carga de Flight Schedule Report (SCH012)...")
+        report_page = context.pages[-1] if context.pages else page
+        await report_page.goto(URL_REPORT, wait_until="load", timeout=60000)
+        await report_page.wait_for_selector('text="Flight Schedule Report"', timeout=60000)
 
         # Bucle de descarga por Posta
         for i, posta in enumerate(POSTAS, 1):
             print(f"[{i}/{len(POSTAS)}] 🔄 Procesando posta: {posta}...")
 
-            inputs_fecha = target_page.locator('input[title*="Flight Period"], input[name*="date"], input[type="text"]')
+            inputs_fecha = report_page.locator('input[title*="Flight Period"], input[name*="date"], input[type="text"]')
             await inputs_fecha.nth(0).fill(fecha_hoy)
             await inputs_fecha.nth(1).fill(fecha_hoy)
 
-            input_brd_pt = target_page.locator('xpath=//td[contains(., "Brd Pt")]/following-sibling::td//input | input[name*="brdPt"]').first
+            input_brd_pt = report_page.locator('xpath=//td[contains(., "Brd Pt")]/following-sibling::td//input | input[name*="brdPt"]').first
             await input_brd_pt.clear()
             await input_brd_pt.fill(posta)
 
-            async with target_page.expect_download() as download_info:
-                flecha_desplegable = target_page.locator('xpath=//button[contains(@class, "ui-splitbutton")]//span | div:has-text("Generate") button | .ui-menu-button').first
+            async with report_page.expect_download() as download_info:
+                flecha_desplegable = report_page.locator('xpath=//button[contains(@class, "ui-splitbutton")]//span | div:has-text("Generate") button | .ui-menu-button').first
                 await flecha_desplegable.click()
 
-                opcion_excel = target_page.locator('text="Generate As EXCEL"')
+                opcion_excel = report_page.locator('text="Generate As EXCEL"')
                 await opcion_excel.click()
 
             download = await download_info.value
@@ -232,7 +250,7 @@ async def run():
             print(f"   ✅ Descargado localmente: {nombre_archivo}")
 
             subir_a_google_drive(ruta_guardado, nombre_archivo)
-            await target_page.wait_for_timeout(1500)
+            await report_page.wait_for_timeout(1500)
 
         print(f"\n🎉 [COMPLETADO] Proceso finalizado exitosamente para las 28 postas.")
         await browser.close()
