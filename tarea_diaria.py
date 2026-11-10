@@ -156,17 +156,17 @@ async def run():
         except Exception as e:
             log(f"[INFO] Estado navegación inicial: {e}")
 
-        await asyncio.sleep(4)
+        await asyncio.sleep(3)
 
-        # Clic en botón SSO inicial si aplica
+        # Hacemos clic explícito en "LOGIN WITH SSO"
         try:
-            sso_btn = page.locator('button:has-text("Login"), a:has-text("Login"), input[value*="Login"]').first
-            if await sso_btn.is_visible(timeout=4000):
-                log("[INFO] Clic en botón de ingreso corporativo...")
-                await sso_btn.click()
-                await asyncio.sleep(3)
-        except Exception:
-            pass
+            sso_btn = page.locator('text="LOGIN WITH SSO", button:has-text("LOGIN WITH SSO"), a:has-text("LOGIN WITH SSO"), input[value*="SSO"]').first
+            await sso_btn.wait_for(state="visible", timeout=10000)
+            log("[INFO] Clic en botón 'LOGIN WITH SSO'...")
+            await sso_btn.click()
+            await asyncio.sleep(4)
+        except Exception as e:
+            log(f"[INFO] No se requirió clic manual en SSO o ya redirigió: {e}")
 
         log("[INFO] Buscando formulario de autenticación Microsoft...")
         try:
@@ -183,7 +183,7 @@ async def run():
             log("[INFO] Procesando redirección post-correo...")
             await asyncio.sleep(5)
 
-            # BYPASS FIDO/PASSKEY
+            # BYPASS FIDO/PASSKEY SI ES NECESARIO
             for _ in range(5):
                 for p_active in context.pages:
                     for f in [p_active] + p_active.frames:
