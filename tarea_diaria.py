@@ -100,168 +100,13 @@ async def run():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
-        )
-        context = await browser.new_context(accept_downloads=True)
-        page = await context.new_page()
-
-        print("[INFO] 1. Navegando al portal Croamis...")
-        await page.goto(URL_REPORT, wait_until="load", timeout=60000)
-        await page.wait_for_timeout(3000)
-
-        # Botón de ingreso inicial si la landing lo exige
-        try:
-            sso_btn = page.locator('button:has-text("Login"), a:has-text("Login"), #loginButton').first
-            if await sso_btn.is_visible(timeout=3000):
-                print("[INFO] Detectado botón de ingreso inicial. Haciendo clic...")
-                await sso_btn.click()
-                await page.wait_for_timeout(3000)
-        except Exception:
-            pass
-
-        print("[INFO] Buscando formulario de autenticación Microsoft...")
-        try:
-            # 1. EMAIL
-            email_input = page.locator('input[type="email"], input[name="loginfmt"], input[id="i0116"]').first
-            await email_input.wait_for(state="visible", timeout=30000)
-            await email_input.fill(USUARIO)
-            await page.wait_for_timeout(1000)
-            
-            btn_next = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
-            await btn_next.click()
-
-            print("[INFO] Esperando respuesta del servidor de identidad Microsoft...")
-            await page.wait_for_timeout(4000)
-
-            # BYPASS FIDO / PASSKEY IF REDIRECTED
-            if "fido" in page.url or "reprocess" in page.url:
-                print("[INFO] Detectada redirección FIDO/Passkey. Cancelando/Cambiando a contraseña...")
-                try:
-                    # Buscar opciones como "Usar contraseña", "Use your password instead" o "Cancel"
-                    pass_instead_btn = page.locator('a:has-text("password"), a:has-text("contraseña"), #¡Identificado al 100%! El log nos muestra la causa exacta por la que la navegación se congela justo ahí:
-
-`navigated to "https://login.microsoft.com/.../bridge/fido?..."`
-
-En los entornos headless (navegadores en la nube sin pantalla como Render), Microsoft detecta la cuenta corporativa e intenta redirigir a una página de autenticación sin contraseña basada en **FIDO / LLave de seguridad / Windows Hello**. Como no hay interfaz física, la navegación a `/bridge/fido` se queda colgada esperando respuesta y jamás muestra el campo de contraseña tradicional.
-
-Para saltar esa redirección FIDO e ir directo a la pantalla de contraseña clásica, debemos configurar el **User-Agent** de Playwright simulando un navegador Chrome de escritorio real en Windows.
-
----
-
-### Código actualizado para `tarea_diaria.py`
-
-Reemplaza todo el contenido de `tarea_diaria.py` en GitHub por esta versión:
-
-```python
-import os
-import json
-import asyncio
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
-import pyotp
-from playwright.async_api import async_playwright
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
-# ---------------------------------------------------------
-# 0. Servidor dummy para mantener vivo el Web Service en Render
-# ---------------------------------------------------------
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK - Croamis Bot Running")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
-
-# ---------------------------------------------------------
-# 1. Variables de Entorno
-# ---------------------------------------------------------
-TOTP_SECRET = os.environ.get("CROAMIS_2FA_SECRET")
-USUARIO = os.environ.get("CROAMIS_USER")
-PASSWORD = os.environ.get("CROAMIS_PASSWORD")
-GOOGLE_JSON_STR = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-
-DRIVE_FOLDER_ID = "1AuP_PBoGOTDugGKRsefAcS_QtU6exJ4X"
-
-POSTAS = [
-    # Norteamérica
-    "MIA", "MCO", "BOS", "JFK", "ATL", "LAX", "SEA", "MEX", "NLU", "ORD", "HSV", "KIN",
-    # Europa
-    "MAD", "FRA", "CDG", "BCN", "FCO", "MXP", "AMS", "BRU", "LGG", "ZAZ", "JNB", "CPT", "LIS", "LHR",
-    # Oceanía
-    "SYD", "MEL", "AKL",
-    # Centroamérica
-    "PTY", "SDQ", "GEO", "SJO", "GUA"
-]
-
-URL_REPORT = "[https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH](https://croamis.latamcargo.com/croamis/reportFlightSchedule?a=SCH)"
-
-def subir_a_google_drive(ruta_local, nombre_archivo):
-    """Suba un archivo local a la carpeta especificada en Google Drive."""
-    if not GOOGLE_JSON_STR:
-        print("⚠️ [ADVERTENCIA] No se configuró GOOGLE_CREDENTIALS_JSON. Omitiendo subida.")
-        return
-
-    try:
-        info_credenciales = json.loads(GOOGLE_JSON_STR)
-        creds = Credentials.from_service_account_info(
-            info_credenciales, 
-            scopes=['[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)']
-        )
-        service = build('drive', 'v3', credentials=creds)
-
-        file_metadata = {
-            'name': nombre_archivo,
-            'parents': [DRIVE_FOLDER_ID]
-        }
-        media = MediaFileUpload(
-            ruta_local, 
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            resumable=True
-        )
-
-        archivo_subido = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id'
-        ).execute()
-
-        print(f"   ☁️ Subido con éxito a Google Drive (ID: {archivo_subido.get('id')})")
-    except Exception as e:
-        print(f"   ❌ Error subiendo a Google Drive: {e}")
-
-async def run():
-    if not TOTP_SECRET or not USUARIO or not PASSWORD:
-        raise ValueError("Error: Faltan variables de entorno requeridas en Render.")
-
-    carpeta_destino = os.path.join(os.getcwd(), "barrido hdc")
-    os.makedirs(carpeta_destino, exist_ok=True)
-
-    totp = pyotp.TOTP(TOTP_SECRET)
-    token_2fa = totp.now()
-    fecha_hoy = datetime.now().strftime("%d-%b-%Y").upper()
-    print(f"[INFO] Código 2FA generado exitosamente.")
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-blink-features=AutomationControlled"
             ]
         )
-        # Contexto configurado con User-Agent estándar para forzar flujo de contraseña sin FIDO
+        # Contexto configurado con User-Agent estándar para evitar el bypass FIDO
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             accept_downloads=True,
@@ -284,11 +129,10 @@ async def run():
             btn_next = page.locator('input[type="submit"], input[id="idSIButton9"], button[id="idSIButton9"]').first
             await btn_next.click()
 
-            # Esperar a que la navegación de correo termine completamente
             await page.wait_for_load_state("networkidle")
             await page.wait_for_timeout(2000)
 
-            # Si Microsoft ofrece ingresar mediante FIDO/Llave, hacemos clic en "Usar tu contraseña en su lugar"
+            # Si Microsoft muestra la opción de cambiar a contraseña en lugar de FIDO
             try:
                 btn_use_pass = page.locator('a[id="idA_PWD_SwitchToPassword"], a:has-text("Use your password instead"), a:has-text("Usar la contraseña en su lugar")').first
                 if await btn_use_pass.is_visible(timeout=3000):
