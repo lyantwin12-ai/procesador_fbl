@@ -1,10 +1,6 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pandas
 pdfplumber
-pypdf
 gspread
-gspread-dataframe
-gspread-formatting
 google-auth
-google-api-python-client
